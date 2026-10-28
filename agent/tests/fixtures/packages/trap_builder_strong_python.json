@@ -1,0 +1,53 @@
+{
+ "vacancy_id": 9000004,
+ "id": 9000004,
+ "title": "AI Product Builder",
+ "slug": "9000004-ai-product-builder",
+ "url": "https://hirify.me/jobs/9000004-ai-product-builder",
+ "company_masked": false,
+ "remote_type": "global",
+ "work_format": [
+  "remote"
+ ],
+ "work_type": "fulltime",
+ "employee_type": [
+  "employment"
+ ],
+ "english_level": "b2",
+ "verified": false,
+ "can_apply_directly": false,
+ "created_at": "2026-10-27T10:00:00.000000Z",
+ "updated_at": "2026-10-27T10:00:00.000000Z",
+ "salary": null,
+ "specializations": [
+  {
+   "code": "product_engineer",
+   "name": "Продуктовый инженер",
+   "name_en": "Product Engineer"
+  }
+ ],
+ "grades": [
+  "senior"
+ ],
+ "regions": [],
+ "cities": [],
+ "macroregion": null,
+ "description_format": "text",
+ "application_instructions": null,
+ "hidden": false,
+ "hidden_reason": null,
+ "has_applied": false,
+ "application_id": null,
+ "in_tracker": false,
+ "tracker_id": null,
+ "company": "Quanta Ops",
+ "vacancy_language": "en",
+ "skills": [
+  "ai",
+  "python",
+  "llm",
+  "ai agents",
+  "product management"
+ ],
+ "description": "Quanta Ops automates back-office work for logistics companies with LLM agents.\n\nWhat you will do\n- Own an agent workflow end to end: discovery with customers, prototype, production.\n- Write and ship production Python code for agent tools and evaluations.\n- Define quality metrics for agents and run evals.\n\nMust have\n- Strong Python: 3+ years writing production Python code.\n- Experience shipping an LLM agent to production.\n- Product ownership.\n\nNice to have\n- Logistics domain."
+}

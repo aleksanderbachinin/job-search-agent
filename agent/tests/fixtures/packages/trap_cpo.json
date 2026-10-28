@@ -1,0 +1,52 @@
+{
+ "vacancy_id": 9000003,
+ "id": 9000003,
+ "title": "Chief Product Officer (CPO)",
+ "slug": "9000003-chief-product-officer-cpo",
+ "url": "https://hirify.me/jobs/9000003-chief-product-officer-cpo",
+ "company_masked": false,
+ "remote_type": "global",
+ "work_format": [
+  "remote"
+ ],
+ "work_type": "fulltime",
+ "employee_type": [
+  "employment"
+ ],
+ "english_level": "b2",
+ "verified": false,
+ "can_apply_directly": false,
+ "created_at": "2026-10-27T10:00:00.000000Z",
+ "updated_at": "2026-10-27T10:00:00.000000Z",
+ "salary": null,
+ "specializations": [
+  {
+   "code": "product_management",
+   "name": "Product менеджмент",
+   "name_en": "Product Management"
+  }
+ ],
+ "grades": [
+  "c_level"
+ ],
+ "regions": [],
+ "cities": [],
+ "macroregion": null,
+ "description_format": "text",
+ "application_instructions": null,
+ "hidden": false,
+ "hidden_reason": null,
+ "has_applied": false,
+ "application_id": null,
+ "in_tracker": false,
+ "tracker_id": null,
+ "company": "Lumen Health",
+ "vacancy_language": "en",
+ "skills": [
+  "product management",
+  "leadership",
+  "strategy",
+  "healthtech"
+ ],
+ "description": "Lumen Health is a telemedicine startup in 6 countries.\n\nAs our CPO you will own the product vision and strategy, build and lead a product org of 12 PMs and designers, and report to the CEO and the board.\n\nRequirements\n- 10+ years in product, 5+ years leading product managers.\n- Experience as CPO or VP Product in a scale-up.\n- Healthtech or regulated industry experience.\n\nRemote within Europe."
+}
