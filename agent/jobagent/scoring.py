@@ -11,6 +11,8 @@ from typing import Any, Literal
 import anthropic
 from pydantic import BaseModel, Field
 
+from .facts import strip_markers
+
 log = logging.getLogger(__name__)
 
 KNOWLEDGE_FILES = {
@@ -193,8 +195,9 @@ def load_knowledge(knowledge_dir: Path) -> dict[str, str]:
             out[key] = path.read_text(encoding="utf-8")
         elif key != "examples":
             raise FileNotFoundError(f"Нет файла {path}")
+    # Номера фактов [КОД-N] нужны сборке пакета отклика; в промпт оценки они не попадают.
     out["resume"] = "\n\n".join(
-        f'<file name="{path.relative_to(knowledge_dir)}">\n{path.read_text(encoding="utf-8")}\n</file>'
+        f'<file name="{path.relative_to(knowledge_dir)}">\n{strip_markers(path.read_text(encoding="utf-8"))}\n</file>'
         for path in resume_files(knowledge_dir)
     )
     return out
