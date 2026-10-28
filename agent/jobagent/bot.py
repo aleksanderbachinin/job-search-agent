@@ -14,6 +14,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from .cards import DETAILS_HEADER, SKIP_REASONS, STAGES, contact_url, render_full, render_stats, vacancy_url
 from .db import Database, Vacancy
 from .hirify import HirifyClient, HirifyError, tracker_id_from
+from .package_bot import PackageRunner, build_package_router
 
 log = logging.getLogger(__name__)
 
@@ -24,6 +25,7 @@ HELP = """Я присылаю вакансии из ваших фильтров 
 📇 Контакт — раскрою в Hirify, как откликнуться (тратит одно раскрытие из 200 в день)
 ✅ Откликнулся — запишу отклик в трекер Hirify
 ⏭ Пропустить — спрошу причину и скрою вакансию в Hirify
+📝 Подготовить отклик — соберу PDF-резюме и письмо под вакансию, пришлю ответом на карточку; ✏️ Переделать под пакетом — пересоберу с вашей правкой
 После отклика можно отметить интервью, оффер или отказ.
 
 /stats — воронка за 7 дней и за всё время
@@ -62,7 +64,8 @@ def kb_new(v: Vacancy, expanded: bool = False) -> InlineKeyboardMarkup:
     contact = _contact_button(b, v)
     b.button(text="✅ Откликнулся", callback_data=f"ap:{v.vacancy_id}")
     b.button(text="⏭ Пропустить", callback_data=f"sk:{v.vacancy_id}")
-    b.adjust(*([2, 1, 2] if contact else [2, 2]))
+    b.button(text="📝 Подготовить отклик", callback_data=f"pk:{v.vacancy_id}")
+    b.adjust(*([2, 1, 2, 1] if contact else [2, 2, 1]))
     return b.as_markup()
 
 
@@ -290,7 +293,11 @@ def build_router(db: Database, hirify: HirifyClient, owner_id: int) -> Router:
     return router
 
 
-def make_dispatcher(db: Database, hirify: HirifyClient, owner_id: int) -> Dispatcher:
+def make_dispatcher(
+    db: Database, hirify: HirifyClient, owner_id: int, package_runner: PackageRunner | None = None
+) -> Dispatcher:
     dp = Dispatcher()
     dp.include_router(build_router(db, hirify, owner_id))
+    if package_runner is not None:
+        dp.include_router(build_package_router(db, package_runner, owner_id))
     return dp

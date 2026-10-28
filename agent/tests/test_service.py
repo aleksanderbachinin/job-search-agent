@@ -439,7 +439,9 @@ def test_keyboard_keeps_status_when_details_toggle():
     def texts(markup):
         return [b.text for row in markup.inline_keyboard for b in row]
 
-    assert texts(kb_for(v("shown"), True)) == ["🔗 Открыть", "📋 Свернуть", "📇 Контакт", "✅ Откликнулся", "⏭ Пропустить"]
+    assert texts(kb_for(v("shown"), True)) == [
+        "🔗 Открыть", "📋 Свернуть", "📇 Контакт", "✅ Откликнулся", "⏭ Пропустить", "📝 Подготовить отклик"
+    ]
     assert "📋 Подробнее" in texts(kb_for(v("shown"), False))
     applied = texts(kb_for(v("applied"), True))
     assert applied[0] == "✅ Откликнулся" and "🎤 Позвали на интервью" in applied and "📋 Свернуть" in applied
