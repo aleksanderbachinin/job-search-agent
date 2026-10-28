@@ -61,7 +61,21 @@ CREATE TABLE IF NOT EXISTS deliveries (
     event       TEXT,
     received_at TEXT NOT NULL
 );
+
+-- версии пакетов отклика: status building / ready / failed, path — папка с файлами
+CREATE TABLE IF NOT EXISTS packages (
+    slug          TEXT NOT NULL,
+    version       INTEGER NOT NULL,
+    status        TEXT NOT NULL,
+    path          TEXT,
+    tg_message_id INTEGER,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    PRIMARY KEY (slug, version)
+);
 """
+
+PACKAGE_FIELDS = {"status", "path", "tg_message_id"}
 
 
 def now_iso() -> str:
@@ -246,6 +260,57 @@ class Database:
             f"UPDATE vacancies SET {cols} WHERE slug = ?", (*fields.values(), slug)
         )
         await self.conn.commit()
+
+    # --- пакеты отклика ---
+
+    async def create_package(self, slug: str) -> int:
+        """Новая версия пакета (следующий номер по вакансии) со статусом building."""
+        ts = now_iso()
+        async with self.conn.execute(
+            """INSERT INTO packages (slug, version, status, created_at, updated_at)
+               SELECT ?, COALESCE(MAX(version), 0) + 1, 'building', ?, ? FROM packages WHERE slug = ?
+               RETURNING version""",
+            (slug, ts, ts, slug),
+        ) as cur:
+            (version,) = await cur.fetchone()
+        await self.conn.commit()
+        return version
+
+    async def set_package(self, slug: str, version: int, **fields: Any) -> None:
+        if not fields:
+            return
+        unknown = set(fields) - PACKAGE_FIELDS
+        if unknown:
+            raise ValueError(f"нет полей пакета: {sorted(unknown)}")
+        fields["updated_at"] = now_iso()
+        cols = ", ".join(f"{k} = ?" for k in fields)
+        await self.conn.execute(
+            f"UPDATE packages SET {cols} WHERE slug = ? AND version = ?", (*fields.values(), slug, version)
+        )
+        await self.conn.commit()
+
+    async def get_package(self, slug: str, version: int) -> dict[str, Any] | None:
+        async with self.conn.execute(
+            "SELECT * FROM packages WHERE slug = ? AND version = ?", (slug, version)
+        ) as cur:
+            row = await cur.fetchone()
+        return dict(row) if row else None
+
+    async def building_package(self, slug: str) -> int | None:
+        async with self.conn.execute(
+            "SELECT MAX(version) FROM packages WHERE slug = ? AND status = 'building'", (slug,)
+        ) as cur:
+            (version,) = await cur.fetchone()
+        return version
+
+    async def fail_stale_packages(self) -> int:
+        """После перезапуска сервиса сборка, которая шла, уже не идёт: building → failed (code restart)."""
+        async with self.conn.execute("SELECT slug, version FROM packages WHERE status = 'building'") as cur:
+            stale = [(r["slug"], r["version"]) for r in await cur.fetchall()]
+        for slug, version in stale:
+            await self.set_package(slug, version, status="failed")
+            await self.log_event("package_failed", slug, version=version, code="restart")
+        return len(stale)
 
     # --- статистика ---
 
