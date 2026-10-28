@@ -9,7 +9,7 @@ import pytest
 from anthropic import transform_schema
 
 from jobagent.config import AGENT_DIR
-from jobagent.scoring import Assessment, Scorer
+from jobagent.scoring import Assessment, PrefilterAnswer, Scorer, Triage
 from test_service import assessment, detail
 
 
@@ -172,3 +172,29 @@ def test_cards_still_cut_legacy_rows_from_db():
     text = render_card("t", a, [], detail())
     assert "➕ раз" in text and "➕ два" in text and "три" not in text
     assert "q1, q2, q3" in text and "q4" not in text
+
+
+def test_haiku_writes_reason_before_verdict():
+    # Модель пишет поля по порядку схемы. Вердикт до причины давал «relevant=false, пропускаю дальше».
+    assert list(transform_schema(Triage)["properties"]) == ["reason", "relevant"]
+
+
+@pytest.mark.parametrize(
+    ("condition", "relevant", "reason"),
+    [
+        (0, True, "формат не указан, Senior PM"),
+        (1, False, "гибрид в Москве, релокации нет (условие 1)"),
+        (4, False, "Backend-разработчик (условие 4)"),
+    ],
+)
+async def test_prefilter_decision_follows_condition_number(condition, relevant, reason):
+    # Haiku называет выполненное условие, а «хотя бы одно из четырёх» считает код.
+    raw = {"reason": reason.split(" (условие")[0], "condition": condition}
+    scorer = Scorer(AGENT_DIR.parent, "claude-haiku-5-5", "claude-sonnet-5-5", client=client_returning(raw))
+    result, _ = await scorer.prefilter(detail(), [])
+    assert result.relevant is relevant
+    assert result.reason == reason
+
+
+def test_prefilter_answer_lists_facts_before_condition():
+    assert list(transform_schema(PrefilterAnswer)["properties"]) == ["reason", "condition"]

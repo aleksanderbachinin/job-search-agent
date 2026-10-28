@@ -88,7 +88,7 @@ async def test_assess_request_uses_cache_fallbacks_and_knowledge(knowledge):
 
 async def test_prefilter_request_uses_triage_model_criteria_and_long_cache(knowledge):
     captured = []
-    client = make_client(captured, {"relevant": False, "reason": "гибрид в Москве"}, TRIAGE_MODEL)
+    client = make_client(captured, {"reason": "гибрид в Москве", "condition": 1}, TRIAGE_MODEL)
     scorer = Scorer(knowledge, TRIAGE_MODEL, SCORING_MODEL, client=client)
     result, usage = await scorer.prefilter(detail(), [{"id": 1, "name": "PM remote"}])
     assert result.relevant is False and usage.cache_write_tokens == 7
