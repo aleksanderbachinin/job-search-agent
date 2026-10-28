@@ -38,6 +38,9 @@ EMPLOYER_NAMES: dict[str, str] = {
     "AEZ": "AEZAKMI Browser",
 }
 
+# В английском резюме эти места называются иначе (остальные — как в EMPLOYER_NAMES).
+EMPLOYER_NAMES_EN: dict[str, str] = {"AIC": "AI content and own experiments"}
+
 
 def allowed_fact_employers(job_code: str, role_type: RoleType) -> frozenset[str]:
     """Коды мест работы, на чьи факты может ссылаться пункт под job_code."""
@@ -50,8 +53,10 @@ def bullet_limits(position: int) -> tuple[int, int]:
     return (3, 4) if position < 3 else (1, 2)
 
 
-# Шаги подгонки резюме под одну страницу, по порядку.
-CUT_ORDER: tuple[str, ...] = ("trim:SKK", "trim:STR", "trim_long", "drop:SKK")
+# Шаги подгонки резюме под одну страницу, по порядку. Шаг для места, которого нет в черновике,
+# пропускается. Места из REQUIRED не убираются никогда. drop:AIC и drop:VERDA срабатывают
+# только в growth: в других типах этих мест нет (решение Александра 2026-10-28).
+CUT_ORDER: tuple[str, ...] = ("trim:SKK", "trim:STR", "trim_long", "drop:AIC", "drop:VERDA", "drop:SKK")
 
 # Формулировки из раздела «Не засчитывать» файла опыта, по шаблону (минимум) на пункт.
 # Первый элемент пары — код места работы, к которому привязан шаблон (проверяется только в его
