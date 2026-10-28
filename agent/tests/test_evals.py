@@ -168,7 +168,8 @@ async def test_run_is_saved_with_verdicts_prompt_hash_and_git_sha(tmp_path, monk
 
 async def test_compare_shows_changed_vacancies_and_before_after(tmp_path):
     before = await run(tmp_path, "prefilter", FakeScorer(reject={"2-top": "офис", "6-low": "junior"}))
-    after = await run(tmp_path, "prefilter", FakeScorer(reject={"5-mid": "гибрид", "6-low": "junior"}, prompt="v2"))
+    # У 6-low другая формулировка причины при том же вердикте: это не изменение.
+    after = await run(tmp_path, "prefilter", FakeScorer(reject={"5-mid": "гибрид", "6-low": "стажёр"}, prompt="v2"))
     changes = evals.diff_runs(before, after)
     assert [(c["slug"], c["before"], c["after"]) for c in changes] == [
         ("2-top", "отсеяна: офис", "пропущена"),

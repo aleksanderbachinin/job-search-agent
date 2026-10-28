@@ -336,6 +336,14 @@ def state(step: str, item: dict[str, Any]) -> str:
     return "пропущена" if v["relevant"] else f"отсеяна: {v['reason']}"
 
 
+def decision(step: str, item: dict[str, Any]) -> Any:
+    """С чем сравниваем прогоны: оценка или отсеяна/пропущена. Формулировка причины меняется от прогона к прогону."""
+    v = item["verdict"]
+    if v is None:
+        return "error"
+    return v["score"] if step == "scoring" else v["relevant"]
+
+
 def diff_runs(before: dict[str, Any], after: dict[str, Any]) -> list[dict[str, Any]]:
     """Вакансии, у которых вердикт изменился («было → стало»), в порядке прогона «после»."""
     if before["step"] != after["step"]:
@@ -345,9 +353,11 @@ def diff_runs(before: dict[str, Any], after: dict[str, Any]) -> list[dict[str, A
     for item in after["items"]:
         if item["slug"] not in old:
             continue
-        was, now = state(before["step"], old[item["slug"]]), state(after["step"], item)
-        if was != now:
-            changes.append({"slug": item["slug"], "item": item, "before": was, "after": now})
+        was = old[item["slug"]]
+        if decision(before["step"], was) != decision(after["step"], item):
+            changes.append(
+                {"slug": item["slug"], "item": item, "before": state(before["step"], was), "after": state(after["step"], item)}
+            )
     return changes
 
 
