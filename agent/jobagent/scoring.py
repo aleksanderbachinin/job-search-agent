@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import anthropic
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 log = logging.getLogger(__name__)
 
@@ -138,6 +138,18 @@ class Triage(BaseModel):
     reason: str = Field(description="Одна короткая фраза по-русски")
 
 
+MAX_PROS = 2
+MAX_QUESTIONS = 3
+PRO_WORD_LIMIT = 15
+WORD_LIMITS = {"verdict": 15, "con": 20, "ru_summary": 8, "ru_linkedin": 20}
+
+
+def _clean(items: list[str], unique: bool = False) -> list[str]:
+    """Убирает пробелы по краям и пустые строки; с unique ещё и точные дубли, порядок сохраняется."""
+    out = [s.strip() for s in items if s.strip()]
+    return list(dict.fromkeys(out)) if unique else out
+
+
 class Assessment(BaseModel):
     company: str | None
     role: str
@@ -159,6 +171,40 @@ class Assessment(BaseModel):
     pros: list[str] = Field(description="Два довода: «требование → факт», до 15 слов каждый")
     con: str = Field(description="Главный довод «против», до 20 слов")
     questions: list[str] = Field(description="До трёх коротких вопросов работодателю")
+
+    # Нормализация после разбора ответа. Валидаторы не попадают в JSON-схему для API
+    # (проверено тестом): модель по-прежнему получает те же поля, ограничения живут только здесь.
+    # Лимиты слов не режем: обрезанная посреди фразы строка хуже длинной. Только пишем в лог.
+
+    @field_validator("score")
+    @classmethod
+    def _clamp_score(cls, v: int) -> int:
+        return max(1, min(5, v))
+
+    @field_validator("pros")
+    @classmethod
+    def _limit_pros(cls, v: list[str]) -> list[str]:
+        return _clean(v)[:MAX_PROS]
+
+    @field_validator("questions")
+    @classmethod
+    def _limit_questions(cls, v: list[str]) -> list[str]:
+        return _clean(v)[:MAX_QUESTIONS]
+
+    @field_validator("must_haves", "missing_must_haves", "red_flags")
+    @classmethod
+    def _unique(cls, v: list[str]) -> list[str]:
+        return _clean(v, unique=True)
+
+    @model_validator(mode="after")
+    def _warn_long_text(self) -> Assessment:
+        checks = [(name, getattr(self, name), limit) for name, limit in WORD_LIMITS.items()]
+        checks += [(f"pros[{i}]", pro, PRO_WORD_LIMIT) for i, pro in enumerate(self.pros)]
+        for name, text, limit in checks:
+            n = len(text.split())
+            if n > limit:
+                log.warning("Assessment.%s: %d слов при лимите %d", name, n, limit)
+        return self
 
 
 @dataclass
@@ -319,6 +365,4 @@ class Scorer:
             raise ScoringError("модель отказалась оценивать вакансию")
         if resp.stop_reason == "max_tokens" or resp.parsed_output is None:
             raise ScoringError(f"нет структурированного ответа (stop_reason={resp.stop_reason})")
-        result = resp.parsed_output
-        result.score = max(1, min(5, result.score))
-        return result, usage
+        return resp.parsed_output, usage
