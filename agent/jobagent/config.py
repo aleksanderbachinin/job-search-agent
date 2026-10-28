@@ -38,6 +38,14 @@ class Settings:
     scoring_effort: str = "medium"
     # Отсев Haiku по полному тексту перед Sonnet. PREFILTER=0 выключает.
     prefilter: bool = True
+    # Пакет отклика: генерация резюме и письма, проверка смысла утверждений.
+    package_model: str = "claude-opus-5-5"
+    package_check_model: str = "claude-haiku-5-5"
+    packages_dir: Path = AGENT_DIR / "data" / "packages"
+    # Контакты в резюме и подписи письма.
+    candidate_email: str = ""
+    candidate_linkedin: str = ""
+    candidate_telegram: str = ""
     min_score: int = 4
     max_age_days: int = 7
     reconcile_hours: float = 12.0
@@ -64,6 +72,12 @@ class Settings:
             scoring_model=env.get("SCORING_MODEL", d.scoring_model),
             scoring_effort=env.get("SCORING_EFFORT", d.scoring_effort),
             prefilter=env.get("PREFILTER", "1").strip().lower() not in ("0", "false", "no", "off"),
+            package_model=env.get("PACKAGE_MODEL", d.package_model),
+            package_check_model=env.get("PACKAGE_CHECK_MODEL", d.package_check_model),
+            packages_dir=Path(env.get("PACKAGES_DIR") or d.packages_dir),
+            candidate_email=env.get("CANDIDATE_EMAIL", ""),
+            candidate_linkedin=env.get("CANDIDATE_LINKEDIN", ""),
+            candidate_telegram=env.get("CANDIDATE_TELEGRAM", ""),
             min_score=int(env.get("MIN_SCORE") or d.min_score),
             max_age_days=int(env.get("MAX_AGE_DAYS") or d.max_age_days),
             reconcile_hours=float(env.get("RECONCILE_HOURS") or d.reconcile_hours),
