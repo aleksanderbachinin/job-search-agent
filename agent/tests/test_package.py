@@ -1,6 +1,7 @@
 """Сборщик пакета отклика: порядок вызовов моделей, пересборка, удаление непроверенного, PDF."""
 
 import json
+import logging
 import re
 import shutil
 
@@ -42,13 +43,15 @@ def fb_dir(tmp_path):
 def queue_client(captured: list, responses: list):
     """Фальшивый клиент: на каждый вызов следующий ответ из очереди.
 
-    Ответ — (payload, model); payload может быть функцией от тела запроса.
+    Ответ — (payload, model) или (payload, model, stop_reason); payload может быть функцией от тела
+    запроса или готовым текстом ответа (str).
     """
     pending = list(responses)
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         captured.append(request)
-        payload, model = pending.pop(0)
+        payload, model, *rest = pending.pop(0)
+        stop_reason = rest[0] if rest else "end_turn"
         if callable(payload):
             payload = payload(json.loads(request.content))
         return httpx2.Response(
@@ -58,8 +61,8 @@ def queue_client(captured: list, responses: list):
                 "type": "message",
                 "role": "assistant",
                 "model": model,
-                "content": [{"type": "text", "text": json.dumps(payload, ensure_ascii=False)}],
-                "stop_reason": "end_turn",
+                "content": [{"type": "text", "text": payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)}],
+                "stop_reason": stop_reason,
                 "stop_sequence": None,
                 "usage": {"input_tokens": 10, "output_tokens": 5, "cache_read_input_tokens": 3},
             },
@@ -331,12 +334,13 @@ async def test_dash_in_letter_replaced_with_warning(fb_dir):
     assert any("тире" in w and "letter.subject" in w for w in pkg.warnings)
 
 
-async def test_missing_must_have_becomes_gap(fb_dir):
+async def test_missing_must_have_becomes_gap(fb_dir, caplog):
+    caplog.set_level(logging.INFO, logger="jobagent.package")
     captured: list = []
     wrong_map = {
         "role_type": "builder",
         "requirements": [
-            {"text": "A/B tests", "facts": ["GPTS-2", "GPTS-99"], "status": "closed"},
+            {"text": "A/B tests", "facts": ["GPTS-2", "GPTS-99", "Strong Python skills"], "status": "closed"},
             {"text": "strong python", "facts": ["VIBE-6"], "status": "closed"},
         ],
     }
@@ -344,7 +348,10 @@ async def test_missing_must_have_becomes_gap(fb_dir):
     pkg, _ = await builder(client, fb_dir).build(vacancy())
     reqs = {r.text: r for r in pkg.req_map.requirements}
     assert reqs["strong python"].status == "gap" and reqs["strong python"].facts == []
-    assert reqs["A/B tests"].facts == ["GPTS-2"]  # несуществующий номер убран
+    assert reqs["A/B tests"].facts == ["GPTS-2"]  # несуществующие номера убраны
+    # В лог идёт только число убранных номеров: модель могла написать в facts текст.
+    logged = " ".join(r.getMessage() for r in caplog.records)
+    assert "Strong Python skills" not in logged and "GPTS-99" not in logged
     map_request = user_text(bodies(captured)[0])
     assert "Strong Python" in map_request.split("</vacancy>", 1)[1]
 
@@ -404,6 +411,18 @@ async def test_package_error_carries_usages(fb_dir):
     ]
     assert [u.model for _, u in err.value.usages][:2] == [MAP_MODEL, GEN_MODEL]
     assert PackageError("x").usages == []
+
+
+async def test_truncated_answer_keeps_usage_of_failed_call(fb_dir):
+    captured: list = []
+    truncated = json.dumps(resume())[:500]
+    client = queue_client(captured, [(MAP, MAP_MODEL), (truncated, GEN_MODEL, "max_tokens")])
+    with pytest.raises(PackageError) as err:
+        await builder(client, fb_dir).build(vacancy())
+    assert "max_tokens" in str(err.value)
+    assert [(step, u.model) for step, u in err.value.usages] == [
+        ("package_map", MAP_MODEL), ("package_resume", GEN_MODEL),
+    ]
 
 
 async def test_optional_job_without_bullets_is_dropped(fb_dir):

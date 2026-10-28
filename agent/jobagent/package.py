@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import anthropic
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from .db import Vacancy
 from .factcheck import Violation, check_letter, check_resume
@@ -240,11 +240,11 @@ def _role(v: Vacancy) -> str:
 def _clean_map(req_map: RequirementMap, fb: FactBase, missing: list[str]) -> RequirementMap:
     """Несуществующие номера убираются; требование без номеров и требование из missing_must_haves — gap."""
     missing_keys = {_norm(m) for m in missing}
-    dropped: list[str] = []
+    dropped = 0
     out: list[Requirement] = []
     for req in req_map.requirements:
         facts = [f for f in req.facts if f in fb.facts]
-        dropped += [f for f in req.facts if f not in fb.facts]
+        dropped += len(req.facts) - len(facts)
         status = req.status
         if _norm(req.text) in missing_keys or not facts:
             status, facts = "gap", []
@@ -252,7 +252,8 @@ def _clean_map(req_map: RequirementMap, fb: FactBase, missing: list[str]) -> Req
     seen = {_norm(r.text) for r in out}
     out += [Requirement(text=m, facts=[], status="gap") for m in missing if _norm(m) not in seen]
     if dropped:
-        log.info("карта требований: убраны несуществующие номера %s", ", ".join(dropped))
+        # Только число: в facts модель могла написать что угодно, а не номер.
+        log.info("карта требований: убрано несуществующих номеров: %d", dropped)
     return RequirementMap(role_type=req_map.role_type, requirements=out)
 
 
@@ -331,21 +332,35 @@ class PackageBuilder:
     async def _call(
         self, model: str, system: Any, content: str, output_format: type[BaseModel], max_tokens: int
     ) -> tuple[Any, str | None, Usage]:
-        resp = await self.client.messages.parse(
+        """Структурированный ответ модели; None, если его нет (отказ, обрезан по max_tokens, не та схема).
+
+        Не messages.parse: тот разбирает ответ сам и на обрезанном JSON бросает ValidationError,
+        а затраты такого вызова (самого дорогого) теряются.
+        """
+        resp = await self.client.messages.create(
             model=model,
             max_tokens=max_tokens,
             system=system,
             messages=[{"role": "user", "content": content}],
-            output_format=output_format,
+            output_config={"format": {"type": "json_schema", "schema": anthropic.transform_schema(output_format)}},
         )
         usage = Usage.from_response(resp.model, resp.usage)
-        parsed = None if resp.stop_reason in ("refusal", "max_tokens") else resp.parsed_output
-        return parsed, resp.stop_reason, usage
+        if resp.stop_reason in ("refusal", "max_tokens"):
+            return None, resp.stop_reason, usage
+        text = "".join(block.text for block in resp.content if block.type == "text")
+        try:
+            return output_format.model_validate_json(text), resp.stop_reason, usage
+        except ValidationError:
+            return None, resp.stop_reason, usage
 
-    async def _generate(self, what: str, model: str, system: Any, content: str, output_format, max_tokens: int):
+    async def _generate(
+        self, step: str, what: str, model: str, system: Any, content: str, output_format, max_tokens: int
+    ):
         parsed, stop_reason, usage = await self._call(model, system, content, output_format, max_tokens)
         if parsed is None:
-            raise PackageError(f"{what}: нет структурированного ответа (stop_reason={stop_reason})")
+            err = PackageError(f"{what}: нет структурированного ответа (stop_reason={stop_reason})")
+            err.usages = [(step, usage)]
+            raise err
         return parsed, usage
 
     # ---------- шаги ----------
@@ -358,7 +373,9 @@ class PackageBuilder:
             + "\n\n<must_haves>\n" + json.dumps(a.get("must_haves") or [], ensure_ascii=False) + "\n</must_haves>"
             + "\n\n<missing_must_haves>\n" + json.dumps(missing, ensure_ascii=False) + "\n</missing_must_haves>"
         )
-        req_map, usage = await self._generate("карта требований", self.map_model, self.map_system, content, RequirementMap, 8000)
+        req_map, usage = await self._generate(
+            "package_map", "карта требований", self.map_model, self.map_system, content, RequirementMap, 8000
+        )
         return _clean_map(req_map, self.fb, missing), usage
 
     async def _resume(
@@ -376,7 +393,9 @@ class PackageBuilder:
         if rejected is not None:
             parts.append(_violations_block(*rejected))
         content = "\n\n".join(p for p in parts if p)
-        return await self._generate("резюме", self.gen_model, self.resume_system, content, ResumeDraft, 16000)
+        return await self._generate(
+            "package_resume", "резюме", self.gen_model, self.resume_system, content, ResumeDraft, 16000
+        )
 
     async def _letter(
         self, ctx: _Context, resume: ResumeDraft, rejected: tuple[LetterDraft, list[Violation]] | None = None
@@ -393,7 +412,9 @@ class PackageBuilder:
         if rejected is not None:
             parts.append(_violations_block(*rejected))
         content = "\n\n".join(p for p in parts if p)
-        letter, usage = await self._generate("письмо", self.gen_model, self.letter_system, content, LetterDraft, 8000)
+        letter, usage = await self._generate(
+            "package_letter", "письмо", self.gen_model, self.letter_system, content, LetterDraft, 8000
+        )
         # Обращение задаёт код: модель могла назвать скрытую компанию.
         return letter.model_copy(update={"salutation": ctx.salutation}), usage
 
@@ -434,7 +455,8 @@ class PackageBuilder:
         try:
             return await self._build(v, feedback, previous, usage), usage
         except PackageError as err:
-            err.usages = list(usage)
+            # Затраты вызова, на котором сборка упала, приходят в самом исключении.
+            err.usages = usage + err.usages
             raise
 
     async def _build(
