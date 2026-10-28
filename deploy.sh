@@ -6,7 +6,8 @@
 #   ./deploy.sh <sha>    выложить любой коммит
 #
 # Шаги: тесты на копии коммита → rsync → uv sync и перезапуск → /healthz отдаёт
-# этот коммит → в журнале нет ошибок. После успеха тег prod ставится на коммит.
+# этот коммит → в журнале нет ошибок. После успеха тег prod ставится на коммит,
+# main и prod пушатся на GitHub (origin).
 
 set -euo pipefail
 
@@ -80,3 +81,10 @@ grep -q "Сервис запущен" <<<"$LOG" || fail "В журнале не�
 
 git tag -f prod "$SHA" >/dev/null
 echo "✓ Выложен $SHA, тег prod обновлён."
+
+# На GitHub: тег prod всегда, main только при выкладке HEAD (при откате main не трогаем).
+# Сервер уже обновлён, поэтому сбой пуша — предупреждение, а не ошибка выкладки.
+if [ "$REF" = HEAD ] && [ "$(git branch --show-current)" = main ]; then
+  git push -q origin main || echo "⚠ main не запушен на GitHub: git push origin main" >&2
+fi
+git push -q -f origin prod || echo "⚠ Тег prod не запушен на GitHub: git push -f origin prod" >&2
