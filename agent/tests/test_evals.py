@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+import sqlite3
 
 import pytest
 
@@ -249,3 +250,61 @@ async def test_prefilter_skips_vacancies_rules_reject_but_not_old_ones(tmp_path)
     called = {s for _, s in scorer.calls}
     # Украинскую в работе отсекают правила до Haiku; старую оцениваем: проверяем промпт, а не свежесть.
     assert "2-top" not in called and "3-four" in called
+
+
+async def test_prefilter_sees_vacancy_without_linkedin_research_scoring_with_it(tmp_path):
+    # В работе prefilter идёт до LinkedIn-проверки, а Sonnet после неё. В снимке блок уже лежит в detail.
+    db_path = await make_db(tmp_path / "eval.sqlite3")
+    db = Database(db_path)
+    await db.connect()
+    v = await db.get("3-four")
+    await db.update("3-four", detail=dict(v.detail, linkedin_research={"people": [{"title": "CEO"}]}))
+    await db.close()
+
+    seen = {}
+
+    class Recording(FakeScorer):
+        async def prefilter(self, detail, feeds):
+            seen["prefilter"] = detail
+            return await super().prefilter(detail, feeds)
+
+        async def assess(self, detail, feeds):
+            seen["scoring"] = detail
+            return await super().assess(detail, feeds)
+
+    await evals.run_eval("prefilter", db_path, Recording(), tmp_path / "evals", only={"3-four"})
+    await evals.run_eval("scoring", db_path, Recording(scores={"3-four": 4}), tmp_path / "evals", limit=1, only={"3-four"})
+    assert "linkedin_research" not in seen["prefilter"]
+    assert seen["scoring"]["linkedin_research"] == {"people": [{"title": "CEO"}]}
+
+
+async def test_cli_refuses_compare_with_run_of_another_step_before_calling_model(tmp_path, monkeypatch, capsys):
+    triage_run = await run(tmp_path, "triage", FakeScorer())
+    monkeypatch.setattr(cli, "Scorer", lambda *a, **kw: pytest.fail("Scorer не должен создаваться"))
+    for argv in (
+        ["eval", "prefilter", "--db", str(tmp_path / "eval.sqlite3"), "--compare", str(triage_run["path"])],
+        ["eval", "prefilter", "--compare", str(triage_run["path"]), str(triage_run["path"])],
+    ):
+        with pytest.raises(SystemExit) as exc:
+            await asyncio.to_thread(cli.main, argv)
+        assert exc.value.code != 0
+        assert "triage" in str(exc.value) + capsys.readouterr().err
+
+
+def test_cli_refuses_zero_concurrency(capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["eval", "prefilter", "--concurrency", "0"])
+    assert exc.value.code != 0
+    assert "--concurrency" in capsys.readouterr().err
+
+
+async def test_snapshot_is_opened_read_only(tmp_path):
+    db_path = await make_db(tmp_path / "eval.sqlite3")
+    with sqlite3.connect(db_path) as con:
+        con.execute("PRAGMA journal_mode=DELETE")
+    before = db_path.read_bytes()
+    vacancies = await evals.load_vacancies(db_path)
+    assert len(vacancies) == len(ROWS)
+    # Database.connect перевёл бы снимок в WAL и прогнал схему: файл бы изменился.
+    assert db_path.read_bytes() == before
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["eval.sqlite3"]

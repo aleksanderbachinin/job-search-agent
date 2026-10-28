@@ -146,6 +146,10 @@ async def cmd_dry_run(s: Settings, vacancy_id: int, file: Path | None) -> None:
 async def cmd_eval(s: Settings, args: argparse.Namespace) -> None:
     """Прогон шага по снимку базы или сравнение двух сохранённых прогонов. В рабочую базу не пишет."""
     compare = [evals.load_run(p) for p in args.compare or []]
+    # До запросов к API: сравнение с прогоном другого шага бессмысленно, а scoring стоит денег.
+    for path, other in zip(args.compare or [], compare):
+        if other["step"] != args.step:
+            raise SystemExit(f"{path} — прогон шага {other['step']}, а сравнивается {args.step}")
     if len(compare) == 2:
         print(evals.render_compare(*compare))
         return
@@ -189,6 +193,8 @@ def main(argv: list[str] | None = None) -> None:
     if args.cmd == "eval":
         if args.compare and len(args.compare) > 2:
             ev.error("--compare принимает один или два файла")
+        if args.concurrency < 1:
+            ev.error("--concurrency должен быть не меньше 1")
         runs_model = not (args.compare and len(args.compare) == 2)
         if args.step == "scoring" and runs_model and not args.limit:
             ev.error(f"для scoring нужен --limit от 1 до {evals.MAX_SCORING_LIMIT}: около 2 центов за вакансию")

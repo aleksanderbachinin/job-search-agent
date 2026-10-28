@@ -15,9 +15,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import aiosqlite
+
 from . import rules
 from .config import AGENT_DIR
-from .db import Database, Vacancy
+from .db import Vacancy
 from .scoring import TRIAGE_SYSTEM
 
 STEPS = ("triage", "prefilter", "scoring")
@@ -63,13 +65,15 @@ def bucket_of(label: dict[str, Any]) -> str:
 
 
 async def load_vacancies(db_path: Path) -> list[Vacancy]:
-    db = Database(db_path)
-    await db.connect()
+    # Только чтение: Database.connect перевёл бы файл в WAL и прогнал схему. Снимок не меняется,
+    # поэтому immutable: SQLite не создаёт рядом -wal и -shm.
+    conn = await aiosqlite.connect(f"file:{db_path.resolve()}?mode=ro&immutable=1", uri=True)
+    conn.row_factory = aiosqlite.Row
     try:
-        async with db.conn.execute("SELECT * FROM vacancies ORDER BY created_at, slug") as cur:
+        async with conn.execute("SELECT * FROM vacancies ORDER BY created_at, slug") as cur:
             return [Vacancy.from_row(row) async for row in cur]
     finally:
-        await db.close()
+        await conn.close()
 
 
 def select(step: str, vacancies: list[Vacancy], limit: int | None = None) -> list[Vacancy]:
@@ -111,7 +115,9 @@ async def evaluate(step: str, v: Vacancy, scorer: Any) -> tuple[dict[str, Any] |
         verdict, usage = await scorer.triage(v.card)
         return {"relevant": verdict.relevant, "reason": verdict.reason}, usage
     if step == "prefilter":
-        verdict, usage = await scorer.prefilter(v.detail, v.feeds)
+        # В работе prefilter идёт до LinkedIn-проверки: блока, который снимок уже хранит, он не видит.
+        detail = {k: x for k, x in v.detail.items() if k != "linkedin_research"}
+        verdict, usage = await scorer.prefilter(detail, v.feeds)
         return {"relevant": verdict.relevant, "reason": verdict.reason}, usage
     a, usage = await scorer.assess(v.detail, v.feeds)
     return a.model_dump(), usage
