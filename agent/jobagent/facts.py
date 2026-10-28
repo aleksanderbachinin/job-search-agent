@@ -126,44 +126,51 @@ def _starts_sentence(text: str, pos: int) -> bool:
     return i < 0 or text[i] in ".!?\n"
 
 
-def _name_shaped(word: str) -> bool:
-    return word[0].isupper() or any(c.isdigit() for c in word)
-
-
-def _inner_capital_or_digit(word: str) -> bool:
-    return any(c.isupper() or c.isdigit() for c in word[1:])
+# Слова словаря, которые в английском пересказе бывают обычными словами («grew the product»,
+# «data team», «It cut…»). В словарь они попали из должностей, позиционирований и названий
+# («Product Manager», «IT», «Lifecycle-письма»). Отобраны по настоящему словарю файла опыта.
+_COMMON_ENGLISH = frozenset({
+    "ad", "ads", "affiliate", "agile", "app", "builder", "builders", "business", "captain", "co",
+    "code", "content", "creative", "data", "development", "devops", "edtech", "growth", "head", "it",
+    "lead", "library", "lifecycle", "manager", "marketing", "messenger", "monetization", "ops",
+    "owner", "producer", "product", "production", "project", "react", "reels", "senior", "shop",
+    "shorts", "store", "studio", "team", "tier", "video", "win",
+})
 
 
 def extract_names(text: str, vocabulary: frozenset[str]) -> frozenset[str]:
-    """Названия из словаря, написанные в утверждении как названия (в нижнем регистре).
+    """Названия из словаря в утверждении (в нижнем регистре). Для проверки утверждений, а не фактов.
 
-    Для проверки утверждений, а не фактов. Слово из одних строчных («product», «growth», «it»)
-    в английском пересказе — обычное слово, а не название, хотя в словаре есть «Product Manager»
-    и «IT». Названием считается слово с заглавной буквы или с цифрой (тот же признак, по которому
-    собран словарь). В начале предложения заглавная ничего не значит: там названием считается
-    только слово с заглавной внутри или с цифрой (TikTok, GA4, MPSTATS).
+    Слово словаря считается всегда, без учёта регистра и места («Metabase dashboards…»,
+    «paddle billing»). Исключение — обычные английские слова (_COMMON_ENGLISH): они считаются
+    названием, только если написаны с заглавной не в начале предложения («the Growth team»).
     """
     out = set()
     for m in _latin_words(text):
         word = m.group()
         low = word.lower()
-        if low not in vocabulary or not _name_shaped(word):
+        if low not in vocabulary:
             continue
-        if _starts_sentence(text, m.start()) and not _inner_capital_or_digit(word):
+        if low in _COMMON_ENGLISH and (not word[0].isupper() or _starts_sentence(text, m.start())):
             continue
         out.add(low)
     return frozenset(out)
 
 
-def unknown_terms(text: str, vocabulary: frozenset[str]) -> frozenset[str]:
-    """Латинские слова с заглавной не в начале предложения, которых нет ни в словаре, ни в GENERIC_TERMS."""
+def unknown_terms(
+    text: str, vocabulary: frozenset[str], *, skip_sentence_start: bool = True
+) -> frozenset[str]:
+    """Латинские слова с заглавной не в начале предложения, которых нет ни в словаре, ни в GENERIC_TERMS.
+
+    skip_sentence_start=False — для перечня названий (пункт навыков), где первое слово — тоже название.
+    """
     out = set()
     for m in _latin_words(text):
         word = m.group()
         low = word.lower()
         if not word[0].isupper() or low in vocabulary or low in _GENERIC_LOWER:
             continue
-        if _starts_sentence(text, m.start()):
+        if skip_sentence_start and _starts_sentence(text, m.start()):
             continue
         out.add(word)
     return frozenset(out)

@@ -246,9 +246,30 @@ def test_true_bullets_from_manual_resume_pass(fb, req_map):
         ("GPTS", "Lifecycle emails lifted first renewal from 43% to 57% and long-term retention from 70% to 76%.", ["GPTS-6"]),
         ("AEZ", "Localized the product into English, Chinese and Portuguese: +30% paying users from these markets in the first month.", ["AEZ-3"]),
         ("VIBE", "Owned UX of VibeCamp, an internal AI platform at i-free, one of the first in the company.", ["VIBE-0", "VIBE-1"]),
+        ("STR", "Ran 45 JTBD customer interviews and shipped the MVP in 1 month", ["STR-1"]),
     ]
     for code, text, facts in ok:
         assert check_claim(Claim(text=text, facts=facts), "b", frozenset({code}), fb, req_map) == [], text
+    # CoinKeeper под i-free в резюме типа growth.
+    ck = Claim(text="Launched an organic short-video channel: 150+ videos and 1M+ views in 3 months", facts=["CK-1"])
+    assert check_claim(ck, "b", allowed_fact_employers("VIBE", "growth"), fb, req_map) == []
+
+
+@pytest.mark.parametrize("text,facts,allowed,code", [
+    ("Metabase dashboards for sellers", ["MPS-5"], {"MPS"}, "term"),
+    ("launched paddle billing", ["MPS-5"], {"MPS"}, "term"),
+    ("Ozon, SQL, GA4", ["SKILL-3"], {"SKILL", "PROF"}, "term"),
+])
+def test_names_at_sentence_start_and_lowercase_are_checked(fb, req_map, text, facts, allowed, code):
+    v = check_claim(Claim(text=text, facts=facts), "b", frozenset(allowed), fb, req_map)
+    assert code in codes(v), v
+
+
+def test_skills_first_item_is_checked_for_unknown_term(fb, req_map):
+    skills = [Claim(text="Tableau, SQL", facts=["SKILL-3"]), Claim(text="Analytics: Looker, GA4", facts=["SKILL-3"])]
+    v = check_resume(_resume(fb, VALID_BUILDER, skills=skills), req_map, fb, "en")
+    unknown = {x.path: x.detail for x in v if x.code == "unknown_term"}
+    assert unknown == {"skills[0]": "Tableau", "skills[1]": "Looker"}
 
 
 def test_invented_number(fb, req_map):

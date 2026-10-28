@@ -133,13 +133,17 @@ def test_extract_terms_ignores_case():
     assert extract_terms("Built in METABASE and GA4, not Kubernetes", vocab) == {"metabase", "ga4"}
 
 
-def test_extract_names_only_name_shaped_words():
-    vocab = frozenset({"metabase", "ga4", "product", "growth", "it", "tiktok"})
-    # Строчные слова из словаря («product», «growth») в утверждении — обычные слова, не названия.
+def test_extract_names_common_words_only_as_names():
+    vocab = frozenset({"metabase", "ga4", "product", "growth", "it", "tiktok", "ozon", "paddle"})
+    # Обычные английские слова из словаря («product», «growth», «it») строчными или в начале
+    # предложения названиями не считаются.
     assert extract_names("Built the product from zero, steady growth in METABASE and ga4", vocab) == {"metabase", "ga4"}
-    # В начале предложения заглавная ничего не значит: «It», «Product» не названия, «TikTok», «GA4» названия.
     assert extract_names("It grew. Product led. TikTok and GA4 helped", vocab) == {"tiktok", "ga4"}
-    assert extract_names("Dashboards in Metabase", vocab) == {"metabase"}
+    assert extract_names("Ran the Growth team", vocab) == {"growth"}
+    # Остальные слова словаря считаются всегда: в начале предложения и строчными.
+    assert extract_names("Metabase dashboards for sellers", vocab) == {"metabase"}
+    assert extract_names("Ozon, SQL, GA4", vocab) == {"ozon", "ga4"}
+    assert extract_names("launched paddle billing on ozon", vocab) == {"paddle", "ozon"}
 
 
 def test_unknown_terms_skip_sentence_start_and_generic():
@@ -148,6 +152,8 @@ def test_unknown_terms_skip_sentence_start_and_generic():
     # Начало предложения и начало строки не считаются именами.
     assert unknown_terms("Used tools. Kubernetes helped.\nDocker too", vocab) == set()
     assert unknown_terms("Used tools. Then Kubernetes helped", vocab) == {"Kubernetes"}
+    # Список навыков: первый пункт — название, а не начало предложения.
+    assert unknown_terms("Tableau, Metabase", vocab, skip_sentence_start=False) == {"Tableau"}
 
 
 def test_duplicate_id_raises(tmp_path):

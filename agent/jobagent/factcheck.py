@@ -88,6 +88,18 @@ def _gap(claim: Claim, path: str, req_map: RequirementMap) -> list[Violation]:
     return [] if i is None else [Violation(path, "gap", f"requirements[{i}]")]
 
 
+def _unknown_names(text: str, vocabulary: frozenset[str], *, names_list: bool) -> frozenset[str]:
+    """Неизвестные названия. Пункт навыков — перечень названий («Tableau, SQL» или
+    «Analytics: Tableau, SQL»): первое название в нём не начало предложения. Подпись до «:»
+    проверяется как обычный текст."""
+    if not names_list:
+        return unknown_terms(text, vocabulary)
+    label, sep, items = text.partition(":")
+    if not sep:
+        return unknown_terms(text, vocabulary, skip_sentence_start=False)
+    return unknown_terms(label, vocabulary) | unknown_terms(items, vocabulary, skip_sentence_start=False)
+
+
 def _check_claim(
     claim: Claim,
     path: str,
@@ -127,7 +139,8 @@ def _check_claim(
         extra_terms = sorted(extract_names(claim.text, fb.vocabulary) - terms - exempt)
         if extra_terms:
             out.append(Violation(path, "term", ", ".join(extra_terms)))
-        unknown_names = sorted(t for t in unknown_terms(claim.text, fb.vocabulary) if t.lower() not in exempt)
+        found = _unknown_names(claim.text, fb.vocabulary, names_list=allowed_employers == SKILL_EMPLOYERS)
+        unknown_names = sorted(t for t in found if t.lower() not in exempt)
         if unknown_names:
             out.append(Violation(path, "unknown_term", ", ".join(unknown_names)))
 
