@@ -335,6 +335,22 @@ class Database:
                 counts[key] = counts.get(key, 0) + 1
         return counts
 
+    async def llm_usage(self, days: int | None, step_prefix: str = "") -> list[dict[str, Any]]:
+        """Токены вызовов моделей (события llm) за `days` дней, шаги которых начинаются со step_prefix."""
+        sql = "SELECT data FROM events WHERE type = 'llm'"
+        args: tuple[Any, ...] = ()
+        if days is not None:
+            since = (datetime.now(UTC) - timedelta(days=days)).isoformat(timespec="seconds")
+            sql += " AND created_at >= ?"
+            args = (since,)
+        out = []
+        async with self.conn.execute(sql + " ORDER BY id", args) as cur:
+            async for row in cur:
+                data = json.loads(row["data"] or "{}")
+                if str(data.pop("step", "")).startswith(step_prefix):
+                    out.append(data)
+        return out
+
     async def skip_reasons(self, days: int | None) -> dict[str, int]:
         sql = "SELECT data FROM events WHERE type = 'skipped'"
         args: tuple[Any, ...] = ()

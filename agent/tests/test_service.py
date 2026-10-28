@@ -427,6 +427,46 @@ def test_stats_render():
     assert "Условия или ЗП: 1" in text
     text = render_stats({"received": 2, "rejected:triage": 1, "rejected:prefilter": 1}, {}, "за 7 дней")
     assert "быстрая модель по карточке: 1" in text and "быстрая модель по тексту: 1" in text
+    assert "Пакеты" not in text
+
+
+def llm_usage(model, **tokens):
+    base = {"input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0}
+    return {"model": model, **base, **tokens}
+
+
+def test_stats_render_packages():
+    usages = [
+        llm_usage("claude-opus-5-5", input_tokens=1_000_000),  # $4
+        llm_usage("claude-haiku-5-5", output_tokens=1_000_000),  # $0.50
+    ]
+    text = render_stats({"package_ready": 2, "package_redo": 1}, {}, "за 7 дней", usages)
+    assert "Пакеты: 2 собрано, 1 переделок, средняя стоимость $2.25" in text
+    # Неизвестная модель (задана переменной окружения) в среднюю не входит, но видна.
+    usages.append(llm_usage("claude-next", input_tokens=5))
+    text = render_stats({"package_ready": 2}, {}, "за 7 дней", usages)
+    assert "Пакеты: 2 собрано, 0 переделок, средняя стоимость $2.25, цены нет для: claude-next" in text
+    # Сборки были, но ни одна не дошла до конца: средней нет.
+    text = render_stats({"package_requested": 1}, {}, "за 7 дней", usages[:1])
+    assert "Пакеты: 0 собрано, 0 переделок, потрачено $4.00" in text
+
+
+def test_price_of_usage_counts_cache_tokens():
+    from jobagent.pricing import usage_cost
+
+    u = Usage("claude-sonnet-5-5", input_tokens=1_000_000, output_tokens=1_000_000,
+              cache_read_tokens=1_000_000, cache_write_tokens=1_000_000)
+    assert usage_cost(u) == pytest.approx(2 + 10 + 0.20 + 4)
+    assert usage_cost(llm_usage("claude-opus-5-5", cache_write_tokens=1_000_000)) == pytest.approx(8)
+    assert usage_cost(llm_usage("claude-next", input_tokens=1)) is None
+
+
+async def test_package_llm_usage_only_package_steps(db):
+    await db.log_event("llm", "s1", step="scoring", **llm_usage("claude-sonnet-5-5", input_tokens=7))
+    await db.log_event("llm", "s1", step="package_resume", **llm_usage("claude-opus-5-5", input_tokens=9))
+    await db.log_event("package_ready", "s1", version=1)
+    assert await db.llm_usage(None, step_prefix="package_") == [llm_usage("claude-opus-5-5", input_tokens=9)]
+    assert await db.llm_usage(7, step_prefix="package_") == [llm_usage("claude-opus-5-5", input_tokens=9)]
 
 
 def test_keyboard_keeps_status_when_details_toggle():
@@ -439,9 +479,11 @@ def test_keyboard_keeps_status_when_details_toggle():
     def texts(markup):
         return [b.text for row in markup.inline_keyboard for b in row]
 
-    assert texts(kb_for(v("shown"), True)) == [
+    assert texts(kb_for(v("shown"), True, package=True)) == [
         "🔗 Открыть", "📋 Свернуть", "📇 Контакт", "✅ Откликнулся", "⏭ Пропустить", "📝 Подготовить отклик"
     ]
+    # Без контактов кандидата сборщика пакетов нет, и кнопки тоже.
+    assert "📝 Подготовить отклик" not in texts(kb_for(v("shown"), True))
     assert "📋 Подробнее" in texts(kb_for(v("shown"), False))
     applied = texts(kb_for(v("applied"), True))
     assert applied[0] == "✅ Откликнулся" and "🎤 Позвали на интервью" in applied and "📋 Свернуть" in applied

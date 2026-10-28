@@ -7,6 +7,8 @@
   uv run python -m jobagent.cli eval prefilter|triage [--compare было.json]
   uv run python -m jobagent.cli eval scoring --limit 10 [--compare было.json]
   uv run python -m jobagent.cli eval prefilter --compare было.json стало.json
+  uv run python -m jobagent.cli package <vacancy_id> [--file vacancy.json] [--out папка]
+  uv run python -m jobagent.cli package-eval [--fixtures папка]
 """
 
 from __future__ import annotations
@@ -15,16 +17,22 @@ import argparse
 import asyncio
 import json
 import re
+from dataclasses import replace
 from html import unescape
 from pathlib import Path
 from typing import Any
 
 import anthropic
 
-from . import evals, rules
+from . import evals, package_eval, rules
 from .cards import render_full
-from .config import Settings
+from .config import AGENT_DIR, Settings
 from .hirify import HirifyClient
+from .main import make_package_builder
+from .package_bot import render_summary
+from .package_store import _private_dir, _write, _write_text, map_to_markdown
+from .pdf import LOCATION_LINE, to_markdown
+from .pricing import usage_cost
 from .research import LinkedInResearch, skip_reason
 from .scoring import Scorer
 
@@ -101,18 +109,21 @@ async def cmd_test_webhook(s: Settings, webhook_id: int) -> None:
         await hirify.aclose()
 
 
-async def cmd_dry_run(s: Settings, vacancy_id: int, file: Path | None) -> None:
-    """Прогоняет одну вакансию через отсев и печатает карточку. Ничего не пишет в базу и бот."""
+async def read_detail(s: Settings, vacancy_id: int, file: Path | None) -> dict[str, Any]:
+    """Полный текст вакансии: из JSON-файла (как отдаёт vacancies.read) или из Hirify."""
     if file:
         detail = json.loads(file.read_text(encoding="utf-8"))
-        detail = detail.get("data", detail)
-    else:
-        hirify = HirifyClient(s.hirify_api_key)
-        try:
-            detail = await hirify.read_vacancy(vacancy_id)
-        finally:
-            await hirify.aclose()
+        return detail.get("data", detail)
+    hirify = HirifyClient(s.hirify_api_key)
+    try:
+        return await hirify.read_vacancy(vacancy_id)
+    finally:
+        await hirify.aclose()
 
+
+async def cmd_dry_run(s: Settings, vacancy_id: int, file: Path | None) -> None:
+    """Прогоняет одну вакансию через отсев и печатает карточку. Ничего не пишет в базу и бот."""
+    detail = await read_detail(s, vacancy_id, file)
     if reason := rules.check_card(detail):
         print(f"Правила отсеяли: {reason}")
         return
@@ -141,6 +152,43 @@ async def cmd_dry_run(s: Settings, vacancy_id: int, file: Path | None) -> None:
     html = render_full(detail.get("title", ""), assessment.model_dump(), [{"id": 0, "name": "dry-run"}], detail, expanded=True)
     print(unescape(re.sub(r"</?[bi]>", "", html)))
     print("\n" + json.dumps(assessment.model_dump(), ensure_ascii=False, indent=1))
+
+
+PACKAGES_OUT = AGENT_DIR / "data" / "packages-cli"
+
+
+async def cmd_package(
+    s: Settings, vacancy_id: int, file: Path | None, out: Path | None, client: anthropic.AsyncAnthropic | None = None
+) -> Path:
+    """Собирает пакет одной вакансии без базы и бота: файлы в out, сводка проверки в консоль."""
+    builder = make_package_builder(s, client)
+    if builder is None:
+        raise SystemExit("Для пакета нужны CANDIDATE_EMAIL и CANDIDATE_LINKEDIN в agent/.env")
+    v = package_eval.vacancy_from_detail(await read_detail(s, vacancy_id, file))
+    built, usages = await builder.build(v)
+    out = out or PACKAGES_OUT / v.slug
+    _private_dir(out)
+    contacts = replace(builder.contacts, location_line=LOCATION_LINE[built.lang])
+    _write(out / built.filename, built.pdf)
+    _write_text(out / "resume.md", to_markdown(built.resume, builder.fb, contacts, built.lang))
+    _write_text(out / "letter.md", built.letter_text)
+    _write_text(out / "experience_map.md", map_to_markdown(built.req_map))
+    costs = [usage_cost(u) for _, u in usages]
+    print(f"Пакет {v.slug}: язык {built.lang}, тип {built.role_type}, страниц {package_eval.pdf_pages(built.pdf)}")
+    print(render_summary(built) or "Проверка: замечаний нет")
+    print(f"Вызовов моделей: {len(usages)}, стоимость ${sum(c for c in costs if c is not None):.3f}")
+    print(f"Файлы: {out}")
+    return out
+
+
+async def cmd_package_eval(s: Settings, fixtures: Path) -> None:
+    """Сборка пакетов по фикстурам настоящими моделями (стоит денег), отчёт рядом с отчётами eval."""
+    # SDK сам повторяет запросы при 429, 5xx и обрывах связи.
+    builder = make_package_builder(s, anthropic.AsyncAnthropic(max_retries=6))
+    if builder is None:
+        raise SystemExit("Для пакета нужны CANDIDATE_EMAIL и CANDIDATE_LINKEDIN в agent/.env")
+    run = await package_eval.run(fixtures, builder, out_dir=evals.EVALS_DIR)
+    print(package_eval.render_report(run))
 
 
 async def cmd_eval(s: Settings, args: argparse.Namespace) -> None:
@@ -189,6 +237,12 @@ def main(argv: list[str] | None = None) -> None:
     )
     ev.add_argument("--db", type=Path, default=evals.SNAPSHOT_PATH, help="снимок базы")
     ev.add_argument("--concurrency", type=int, default=evals.CONCURRENCY, help="запросов одновременно")
+    pk = sub.add_parser("package", help="собрать пакет отклика одной вакансии без базы и бота")
+    pk.add_argument("vacancy_id", type=int)
+    pk.add_argument("--file", type=Path, help="JSON полной вакансии вместо запроса к Hirify")
+    pk.add_argument("--out", type=Path, help=f"папка для файлов (по умолчанию {PACKAGES_OUT}/<slug>)")
+    pe = sub.add_parser("package-eval", help="собрать пакеты по фикстурам и проверить итог (Opus, около доллара)")
+    pe.add_argument("--fixtures", type=Path, default=package_eval.FIXTURES_DIR, help="папка с JSON вакансий")
     args = p.parse_args(argv)
     if args.cmd == "eval":
         if args.compare and len(args.compare) > 2:
@@ -218,6 +272,12 @@ def main(argv: list[str] | None = None) -> None:
         asyncio.run(cmd_dry_run(s, args.vacancy_id, args.file))
     elif args.cmd == "eval":
         asyncio.run(cmd_eval(s, args))
+    elif args.cmd == "package":
+        if not args.file:
+            s.require("hirify_api_key")
+        asyncio.run(cmd_package(s, args.vacancy_id, args.file, args.out))
+    elif args.cmd == "package-eval":
+        asyncio.run(cmd_package_eval(s, args.fixtures))
 
 
 if __name__ == "__main__":

@@ -9,7 +9,9 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager, suppress
 
+import anthropic
 import uvicorn
+from aiogram import Bot
 from fastapi import FastAPI
 
 from .bot import Notifier, make_bot, make_dispatcher
@@ -17,6 +19,10 @@ from .config import AGENT_DIR, Settings
 from .db import Database
 from .hirify import HirifyClient
 from .ingest import reconcile_forever, webhook_router
+from .package import PackageBuilder
+from .package_bot import PackageRunner
+from .package_store import PackageStore
+from .pdf import Contacts
 from .pipeline import Pipeline
 from .research import LinkedInResearch
 from .scoring import Scorer
@@ -34,6 +40,39 @@ def read_version() -> str:
         return "unknown"
 
 
+def make_package_builder(settings: Settings, client: anthropic.AsyncAnthropic | None = None) -> PackageBuilder | None:
+    """Сборщик пакетов отклика, если заданы контакты кандидата для резюме и письма; иначе None.
+
+    Общий для сервиса и команд `cli package` / `cli package-eval`.
+    """
+    if not (settings.candidate_email and settings.candidate_linkedin):
+        log.warning("Пакеты отклика выключены: не заданы CANDIDATE_EMAIL и CANDIDATE_LINKEDIN")
+        return None
+    contacts = Contacts(
+        email=settings.candidate_email,
+        linkedin=settings.candidate_linkedin,
+        telegram=settings.candidate_telegram,
+        location_line="",  # строку места и языков подставляет сборщик по языку пакета
+    )
+    return PackageBuilder(
+        settings.knowledge_dir,
+        settings.scoring_model,
+        settings.package_model,
+        settings.package_check_model,
+        contacts,
+        client=client,
+    )
+
+
+def make_package_runner(settings: Settings, bot: Bot | None, db: Database) -> PackageRunner | None:
+    """Сборка пакетов по кнопке в боте; None — кнопки нет."""
+    builder = make_package_builder(settings)
+    if builder is None:
+        return None
+    store = PackageStore(db, settings.packages_dir, builder.fb, builder.contacts)
+    return PackageRunner(bot, db, store, builder, settings.telegram_owner_id)
+
+
 def create_app(settings: Settings) -> FastAPI:
     settings.require(
         "hirify_api_key", "hirify_webhook_secret", "telegram_bot_token", "telegram_owner_id"
@@ -41,7 +80,8 @@ def create_app(settings: Settings) -> FastAPI:
     db = Database(settings.db_path)
     hirify = HirifyClient(settings.hirify_api_key)
     bot = make_bot(settings.telegram_bot_token)
-    notifier = Notifier(bot, settings.telegram_owner_id)
+    package_runner = make_package_runner(settings, bot, db)
+    notifier = Notifier(bot, settings.telegram_owner_id, package_button=package_runner is not None)
     scorer = Scorer(
         settings.knowledge_dir,
         settings.triage_model,
@@ -63,7 +103,9 @@ def create_app(settings: Settings) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await db.connect()
-        dp = make_dispatcher(db, hirify, settings.telegram_owner_id)
+        if stale := await db.fail_stale_packages():
+            log.info("Пакетов, сборка которых оборвалась при перезапуске: %d", stale)
+        dp = make_dispatcher(db, hirify, settings.telegram_owner_id, package_runner)
         tasks = [
             asyncio.create_task(pipeline.run_forever(), name="pipeline"),
             asyncio.create_task(
@@ -84,6 +126,8 @@ def create_app(settings: Settings) -> FastAPI:
         try:
             yield
         finally:
+            # Сборки пакетов тоже: оборванная останется building, при следующем старте станет failed.
+            tasks += list(package_runner.tasks) if package_runner else []
             for t in tasks:
                 t.cancel()
             for t in tasks:
@@ -109,10 +153,16 @@ def create_app(settings: Settings) -> FastAPI:
     return app
 
 
-def main() -> None:
+def configure_logging() -> None:
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
+    # На DEBUG aiosqlite пишет параметры SQL-запросов, а в них текст вакансии, резюме и письма.
+    logging.getLogger("aiosqlite").setLevel(logging.WARNING)
+
+
+def main() -> None:
+    configure_logging()
     settings = Settings.from_env()
     uvicorn.run(create_app(settings), host=settings.host, port=settings.port, log_level="info")
 

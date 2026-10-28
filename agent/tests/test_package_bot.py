@@ -11,12 +11,10 @@ import anthropic
 import httpx2
 import pytest
 from aiogram import Bot
-from aiogram.client.session.base import BaseSession
-from aiogram.methods import AnswerCallbackQuery, SendDocument, SendMessage
+from aiogram.methods import SendDocument, SendMessage
 from aiogram.types import CallbackQuery, Chat, Message, Update, User
 
 from jobagent.bot import HELP, kb_new, make_dispatcher
-from jobagent.db import Database
 from jobagent.facts import parse_facts
 from jobagent.factcheck import Violation
 from jobagent.package_bot import PackageRunner
@@ -24,7 +22,8 @@ from jobagent.package_store import PackageStore
 from jobagent.pdf import PackageError
 from jobagent.scoring import Usage
 from test_package_store import CONTACTS, DETAIL_WORD, EXPERIENCE, LETTER_WORD, RESUME_WORD, WARNING_WORD, built
-from test_service import CARD, detail
+from test_bot import FakeSession
+from test_service import CARD, db, detail  # noqa: F401 (db — фикстура)
 
 OWNER = 42
 STRANGER = 666
@@ -35,40 +34,7 @@ ROLE = "AI Product Builder"
 USAGE = Usage(model="claude-opus-5-5", input_tokens=10, output_tokens=5, cache_read_tokens=3)
 
 
-# ---------- фальшивый Telegram ----------
-# TODO после слияния с веткой, где есть test_bot.py: взять FakeSession и фикстуру db оттуда.
-
-
-class FakeSession(BaseSession):
-    """Записывает вызовы методов Bot API и отвечает правдоподобными объектами."""
-
-    def __init__(self):
-        super().__init__()
-        self.calls: list = []
-        self._ids = count(1000)
-
-    async def make_request(self, bot, method, timeout=None):
-        self.calls.append(method)
-        if isinstance(method, (SendMessage, SendDocument)):
-            return Message(
-                message_id=next(self._ids),
-                date=datetime.now(UTC),
-                chat=Chat(id=method.chat_id, type="private"),
-                text=getattr(method, "text", None),
-            )
-        return True
-
-    async def close(self):
-        pass
-
-    async def stream_content(self, url, headers=None, timeout=30, chunk_size=65536, raise_for_status=True):
-        yield b""
-
-    def of(self, kind) -> list:
-        return [c for c in self.calls if isinstance(c, kind)]
-
-    def answers(self) -> list[str | None]:
-        return [c.text for c in self.of(AnswerCallbackQuery)]
+# ---------- фальшивый сборщик ----------
 
 
 class FakeBuilder:
@@ -87,14 +53,6 @@ class FakeBuilder:
         if self.error is not None:
             raise self.error
         return self.result, [("package_map", USAGE), ("package_resume", USAGE)]
-
-
-@pytest.fixture
-async def db(tmp_path):
-    d = Database(tmp_path / "t.sqlite3")
-    await d.connect()
-    yield d
-    await d.close()
 
 
 @pytest.fixture
@@ -164,8 +122,9 @@ def buttons(markup) -> list[str]:
 
 async def test_card_has_package_button(db):
     v = await add_vacancy(db)
-    rows = kb_new(v).inline_keyboard
+    rows = kb_new(v, package=True).inline_keyboard
     assert [b.callback_data for b in rows[-1]] == [f"pk:{VID}"]
+    assert f"pk:{VID}" not in buttons(kb_new(v))
     assert rows[-1][0].text == "📝 Подготовить отклик"
     assert "Подготовить отклик" in HELP
 

@@ -496,3 +496,126 @@ async def test_vacancy_without_detail_raises_no_detail(fb_dir):
         await builder(queue_client(captured, []), fb_dir).build(v)
     assert err.value.code == "no_detail"
     assert captured == []
+
+
+# ---------- eval пакетов ----------
+
+EVAL_DESCRIPTION = "We build AI agents. Must have: Strong Python, A/B tests. Remote."
+
+
+def write_fixture(dir_, name: str, vacancy_id: int) -> None:
+    d = detail(
+        vacancy_id=vacancy_id,
+        slug=f"{vacancy_id}-ai-product-builder",
+        company="Acme",
+        title="AI Product Builder",
+        vacancy_language="en",
+        description=EVAL_DESCRIPTION,
+    )
+    (dir_ / name).write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+
+
+async def test_package_eval_report_counts(fb_dir, tmp_path):
+    from jobagent import package_eval
+
+    fixtures = tmp_path / "fixtures"
+    fixtures.mkdir()
+    write_fixture(fixtures, "a_happy.json", 9100001)
+    write_fixture(fixtures, "b_invented.json", 9100002)
+    bad = resume({"MPS": [claim(INVENTED, "MPS-2")]})
+    captured: list = []
+    client = queue_client(captured, happy_queue() + [
+        (MAP, MAP_MODEL), (bad, GEN_MODEL), (letter(), GEN_MODEL), (CHECK_OK, CHECK_MODEL),
+        (bad, GEN_MODEL), (CHECK_OK, CHECK_MODEL),
+    ])
+    out_dir = tmp_path / "evals"
+
+    run = await package_eval.run(fixtures, builder(client, fb_dir), out_dir=out_dir)
+
+    happy, invented = run["items"]
+    assert happy["fixture"] == "a_happy" and happy["error"] is None
+    assert happy["removed"] == {} and happy["retried"] is False
+    assert invented["removed"] == {"number": 1} and invented["retried"] is True
+    assert invented["calls"] == {"package_map": 1, "package_resume": 2, "package_letter": 1, "package_check": 2}
+    for item in run["items"]:
+        assert item["pages"] == 1 and item["dashes"] == 0 and item["unsourced"] == 0
+        assert item["letter_words"] > 0 and item["cost_usd"] > 0
+    s = run["summary"]
+    assert s["packages"] == 2 and s["errors"] == 0
+    assert s["unsourced_final"] == 0 and s["dashes"] == 0 and s["pages_over_1"] == 0
+    assert s["removed"] == {"number": 1}
+    assert s["cost_usd"] == pytest.approx(happy["cost_usd"] + invented["cost_usd"])
+
+    report = package_eval.render_report(run)
+    assert "утверждений без источника в финале: 0" in report
+    assert "тире: 0" in report and "страниц > 1: 0" in report
+    (saved,) = out_dir.glob("*-package.json")
+    assert run["path"] == saved
+    # В отчёте и файле только числа и коды: ни письма, ни резюме, ни вакансии.
+    for text in (report, saved.read_text(encoding="utf-8")):
+        assert "interviewed sellers" not in text and "Acme is hiring" not in text
+        assert INVENTED not in text and "Launched a new analytics tool" not in text
+        assert EVAL_DESCRIPTION not in text
+
+
+async def test_package_eval_error_is_counted_by_code(fb_dir, tmp_path):
+    from jobagent import package_eval
+
+    fixtures = tmp_path / "fixtures"
+    fixtures.mkdir()
+    write_fixture(fixtures, "a.json", 9100003)
+    captured: list = []
+    client = queue_client(captured, [(MAP, MAP_MODEL), ("{not json", GEN_MODEL, "max_tokens")])
+
+    run = await package_eval.run(fixtures, builder(client, fb_dir))
+
+    (item,) = run["items"]
+    assert item["error"] == "no_answer" and item["cost_usd"] > 0
+    assert run["summary"]["errors"] == 1 and run["summary"]["packages"] == 0
+    assert "path" not in run  # без out_dir отчёт не сохраняется
+
+
+def test_package_fixtures_load_without_contacts():
+    from jobagent import package_eval
+
+    paths = sorted(package_eval.FIXTURES_DIR.glob("*.json"))
+    names = {p.stem for p in paths}
+    assert {"ai_product_builder_1279450", "trap_injection", "trap_ru_english_name", "trap_cpo",
+            "trap_builder_strong_python", "trap_masked_company"} <= names
+    for path in paths:
+        raw = path.read_text(encoding="utf-8")
+        assert "@" not in raw and "t.me/" not in raw, path.name
+        v = package_eval.load_fixture(path)
+        assert v.detail and v.detail.get("contact") is None and v.status == "shown"
+        assert v.slug == v.detail["slug"] and v.vacancy_id == v.detail["vacancy_id"]
+    masked = package_eval.load_fixture(package_eval.FIXTURES_DIR / "trap_masked_company.json")
+    assert masked.company is None
+
+
+async def test_cli_package_writes_files_without_db(fb_dir, tmp_path, capsys):
+    from jobagent import cli
+    from jobagent.config import Settings
+
+    write_fixture(tmp_path, "v.json", 9100004)
+    settings = Settings(
+        knowledge_dir=fb_dir, candidate_email="a@example.com", candidate_linkedin="https://www.linkedin.com/in/x/"
+    )
+    captured: list = []
+    out = await cli.cmd_package(settings, 0, tmp_path / "v.json", tmp_path / "out", client=queue_client(captured, happy_queue()))
+
+    assert out == tmp_path / "out"
+    assert sorted(p.name for p in out.iterdir()) == [
+        "Bachinin_Alexander_Acme_AI_Product_Builder.pdf", "experience_map.md", "letter.md", "resume.md"
+    ]
+    assert "UTC+3" in (out / "resume.md").read_text(encoding="utf-8")
+    printed = capsys.readouterr().out
+    assert "язык en, тип builder, страниц 1" in printed and "Вызовов моделей: 4" in printed
+
+
+async def test_cli_package_needs_candidate_contacts(fb_dir, tmp_path):
+    from jobagent import cli
+    from jobagent.config import Settings
+
+    write_fixture(tmp_path, "v.json", 9100005)
+    with pytest.raises(SystemExit, match="CANDIDATE_EMAIL"):
+        await cli.cmd_package(Settings(knowledge_dir=fb_dir), 0, tmp_path / "v.json", tmp_path / "out")

@@ -5,11 +5,12 @@
 """
 
 from datetime import UTC, datetime
+from itertools import count
 
 import pytest
 from aiogram import Bot
 from aiogram.client.session.base import BaseSession
-from aiogram.methods import AnswerCallbackQuery, EditMessageReplyMarkup, EditMessageText
+from aiogram.methods import AnswerCallbackQuery, EditMessageReplyMarkup, EditMessageText, SendDocument, SendMessage
 from aiogram.types import CallbackQuery, Chat, Message, Update, User
 
 from jobagent.bot import make_dispatcher
@@ -23,20 +24,35 @@ VID = CARD["vacancy_id"]
 
 
 class FakeSession(BaseSession):
-    """Вместо сети записывает вызовы Telegram API."""
+    """Вместо сети записывает вызовы Telegram API. На отправку сообщения или документа отвечает
+    сообщением с новым message_id, как настоящий Telegram: по нему бот ставит кнопки и ждёт ответа."""
 
     def __init__(self):
         super().__init__()
         self.calls = []
+        self._ids = count(1000)
 
     async def make_request(self, bot, method, timeout=None):
         self.calls.append(method)
+        if isinstance(method, (SendMessage, SendDocument)):
+            return Message(
+                message_id=next(self._ids),
+                date=datetime.now(UTC),
+                chat=Chat(id=method.chat_id, type="private"),
+                text=getattr(method, "text", None),
+            )
         return True
 
     async def close(self): ...
 
     async def stream_content(self, *args, **kwargs):  # pragma: no cover
         raise NotImplementedError
+
+    def of(self, method_type) -> list:
+        return [m for m in self.calls if isinstance(m, method_type)]
+
+    def answers(self) -> list[str | None]:
+        return [a.text for a in self.of(AnswerCallbackQuery)]
 
 
 class FakeHirify:
@@ -107,7 +123,7 @@ class Harness:
         await self._feed(message=self._message(user_id, text, message_id=11))
 
     def sent(self, method_type):
-        return [m for m in self.session.calls if isinstance(m, method_type)]
+        return self.session.of(method_type)
 
     @property
     def answer(self) -> AnswerCallbackQuery:

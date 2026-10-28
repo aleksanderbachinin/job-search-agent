@@ -57,14 +57,16 @@ def _contact_button(b: InlineKeyboardBuilder, v: Vacancy) -> int:
     return 0
 
 
-def kb_new(v: Vacancy, expanded: bool = False) -> InlineKeyboardMarkup:
+def kb_new(v: Vacancy, expanded: bool = False, package: bool = False) -> InlineKeyboardMarkup:
+    """package — показывать «Подготовить отклик»: сборщик пакетов есть, только если заданы контакты кандидата."""
     b = InlineKeyboardBuilder()
     b.button(text="🔗 Открыть", url=vacancy_url(v.slug, v.detail))
     _details_button(b, v, expanded)
     contact = _contact_button(b, v)
     b.button(text="✅ Откликнулся", callback_data=f"ap:{v.vacancy_id}")
     b.button(text="⏭ Пропустить", callback_data=f"sk:{v.vacancy_id}")
-    b.button(text="📝 Подготовить отклик", callback_data=f"pk:{v.vacancy_id}")
+    if package:
+        b.button(text="📝 Подготовить отклик", callback_data=f"pk:{v.vacancy_id}")
     b.adjust(*([2, 1, 2, 1] if contact else [2, 2, 1]))
     return b.as_markup()
 
@@ -94,7 +96,7 @@ def kb_status(v: Vacancy, status_label: str, with_stages: bool, expanded: bool =
     return b.as_markup()
 
 
-def kb_for(v: Vacancy, expanded: bool) -> InlineKeyboardMarkup:
+def kb_for(v: Vacancy, expanded: bool, package: bool = False) -> InlineKeyboardMarkup:
     """Клавиатура по текущему статусу вакансии: нужна, когда раскрываем или сворачиваем карточку."""
     if v.status == "skipped":
         return kb_status(v, f"⏭ Пропущено: {SKIP_REASONS.get(v.reason or '', v.reason or '')}", False, expanded)
@@ -102,7 +104,7 @@ def kb_for(v: Vacancy, expanded: bool) -> InlineKeyboardMarkup:
         if v.stage in STAGES:
             return kb_status(v, STAGES[v.stage][1], v.stage == "interview", expanded)
         return kb_status(v, "✅ Откликнулся", True, expanded)
-    return kb_new(v, expanded)
+    return kb_new(v, expanded, package)
 
 
 def is_expanded(message: Message | None) -> bool:
@@ -115,14 +117,15 @@ def is_expanded(message: Message | None) -> bool:
 class Notifier:
     """Отправляет владельцу карточки и алерты."""
 
-    def __init__(self, bot: Bot, owner_id: int):
+    def __init__(self, bot: Bot, owner_id: int, package_button: bool = False):
         self.bot = bot
         self.owner_id = owner_id
+        self.package_button = package_button
 
     async def send_card(self, v: Vacancy) -> int:
         text = render_full(v.title, v.assessment or {}, v.feeds, v.detail, expanded=False)
         msg = await self.bot.send_message(
-            self.owner_id, text, reply_markup=kb_new(v), disable_web_page_preview=True
+            self.owner_id, text, reply_markup=kb_new(v, package=self.package_button), disable_web_page_preview=True
         )
         return msg.message_id
 
@@ -136,7 +139,7 @@ class Notifier:
 # --- обработчики ---
 
 
-def build_router(db: Database, hirify: HirifyClient, owner_id: int) -> Router:
+def build_router(db: Database, hirify: HirifyClient, owner_id: int, package_button: bool = False) -> Router:
     router = Router()
     router.message.filter(F.from_user.id == owner_id)
     router.callback_query.filter(F.from_user.id == owner_id)
@@ -158,14 +161,19 @@ def build_router(db: Database, hirify: HirifyClient, owner_id: int) -> Router:
         if arg.isdigit():
             days = int(arg)
             text = render_stats(
-                await db.event_counts(days), await db.skip_reasons(days), f"за {days} дн."
+                await db.event_counts(days), await db.skip_reasons(days), f"за {days} дн.",
+                await db.llm_usage(days, "package_"),
             )
         else:
             text = "\n\n".join(
                 [
-                    render_stats(await db.event_counts(7), await db.skip_reasons(7), "за 7 дней"),
                     render_stats(
-                        await db.event_counts(None), await db.skip_reasons(None), "за всё время"
+                        await db.event_counts(7), await db.skip_reasons(7), "за 7 дней",
+                        await db.llm_usage(7, "package_"),
+                    ),
+                    render_stats(
+                        await db.event_counts(None), await db.skip_reasons(None), "за всё время",
+                        await db.llm_usage(None, "package_"),
                     ),
                 ]
             )
@@ -183,7 +191,7 @@ def build_router(db: Database, hirify: HirifyClient, owner_id: int) -> Router:
             return
         expanded = action == "dt"
         text = render_full(v.title, v.assessment or {}, v.feeds, v.detail, expanded)
-        await cb.message.edit_text(text, reply_markup=kb_for(v, expanded), disable_web_page_preview=True)
+        await cb.message.edit_text(text, reply_markup=kb_for(v, expanded, package_button), disable_web_page_preview=True)
         await cb.answer()
 
     @router.callback_query(F.data.startswith("ct:"))
@@ -209,7 +217,7 @@ def build_router(db: Database, hirify: HirifyClient, owner_id: int) -> Router:
         v.detail = detail
         expanded = is_expanded(cb.message)
         text = render_full(v.title, v.assessment or {}, v.feeds, v.detail, expanded)
-        await cb.message.edit_text(text, reply_markup=kb_for(v, expanded), disable_web_page_preview=True)
+        await cb.message.edit_text(text, reply_markup=kb_for(v, expanded, package_button), disable_web_page_preview=True)
         await cb.answer(note)
 
     @router.callback_query(F.data.startswith("ap:"))
@@ -242,7 +250,7 @@ def build_router(db: Database, hirify: HirifyClient, owner_id: int) -> Router:
         v = await load(cb, cb.data.split(":")[1])
         if v is None:
             return
-        await cb.message.edit_reply_markup(reply_markup=kb_new(v, is_expanded(cb.message)))
+        await cb.message.edit_reply_markup(reply_markup=kb_new(v, is_expanded(cb.message), package_button))
         await cb.answer()
 
     @router.callback_query(F.data.startswith("sr:"))
@@ -297,7 +305,7 @@ def make_dispatcher(
     db: Database, hirify: HirifyClient, owner_id: int, package_runner: PackageRunner | None = None
 ) -> Dispatcher:
     dp = Dispatcher()
-    dp.include_router(build_router(db, hirify, owner_id))
+    dp.include_router(build_router(db, hirify, owner_id, package_button=package_runner is not None))
     if package_runner is not None:
         dp.include_router(build_package_router(db, package_runner, owner_id))
     return dp

@@ -7,6 +7,8 @@ from datetime import UTC, datetime
 from html import escape
 from typing import Any
 
+from .pricing import usage_cost
+
 RU_LABELS = {
     "confirmed": "✅",
     "indirect": "🟡",
@@ -207,7 +209,32 @@ def _pct(part: int, whole: int) -> str:
     return f" ({part * 100 // whole}%)" if whole else ""
 
 
-def render_stats(counts: dict[str, int], skip_reasons: dict[str, int], period: str) -> str:
+def render_packages(counts: dict[str, int], package_usage: list[dict[str, Any]]) -> str | None:
+    """Строка о пакетах отклика: собрано, переделок, средняя стоимость собранного пакета.
+
+    В среднюю входят и затраты сборок, которые упали: это цена одного пакета на руках.
+    """
+    ready = counts.get("package_ready", 0)
+    redo = counts.get("package_redo", 0)
+    started = ready + redo + counts.get("package_requested", 0) + counts.get("package_failed", 0)
+    if not started and not package_usage:
+        return None
+    costs = [usage_cost(u) for u in package_usage]
+    total = sum(c for c in costs if c is not None)
+    line = f"Пакеты: {ready} собрано, {redo} переделок"
+    line += f", средняя стоимость ${total / ready:.2f}" if ready else f", потрачено ${total:.2f}"
+    unknown = sorted({u.get("model") or "?" for u, c in zip(package_usage, costs) if c is None})
+    if unknown:
+        line += ", цены нет для: " + ", ".join(escape(m) for m in unknown)
+    return line
+
+
+def render_stats(
+    counts: dict[str, int],
+    skip_reasons: dict[str, int],
+    period: str,
+    package_usage: list[dict[str, Any]] | None = None,
+) -> str:
     received = counts.get("received", 0)
     rejected = {k.split(":", 1)[1]: v for k, v in counts.items() if k.startswith("rejected:")}
     shown = counts.get("shown", 0)
@@ -237,6 +264,8 @@ def render_stats(counts: dict[str, int], skip_reasons: dict[str, int], period: s
     ]
     if counts.get("error"):
         lines.append(f"Ошибки обработки: {counts['error']}")
+    if packages := render_packages(counts, package_usage or []):
+        lines.append(packages)
     if skip_reasons:
         lines.append("")
         lines.append("<b>Почему пропускал</b>")
