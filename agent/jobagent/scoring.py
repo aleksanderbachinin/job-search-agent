@@ -21,18 +21,12 @@ KNOWLEDGE_FILES = {
 EXPERIENCE_DIR = "experience"
 MASTER_RESUME = "Bachinin_Alexander_Experience.md"
 
-CANDIDATE_BRIEF = """Кандидат: Александр Бачинин, Senior Product Manager, 9+ лет опыта, из них 6+ в продуктовых ролях.
-Сильные стороны: AI и SaaS, growth, activation, monetization, B2C и B2B.
-Целевые роли: Product Manager, Senior PM, Product Owner, Product Lead, Head of Product, CPO, Growth PM,
-Product Builder / AI Product Builder. Подходят соседние роли в growth и product marketing (PMM).
-Подходящие грейды: middle, senior, lead, head, director, C-level. Middle и C-level сами по себе не минус.
-Не подходят: дизайнеры, аналитики, разработчики, QA, продажи, поддержка, HR, trainee, intern и junior.
-Языки: русский родной, английский C1, испанский B1.
-Формат по приоритету: удалёнка из России → удалёнка с переездом в другую страну → офис только с релокацией."""
+# Описание кандидата живёт только в search_criteria.md, в этом разделе. Triage видит только его:
+# по карточке стоп-факторы не проверить, а prefilter и Sonnet получают файл целиком.
+PROFILE_HEADING = "## Критерии кандидата"
 
-TRIAGE_SYSTEM = f"""Ты помогаешь отсеять вакансии, которые точно не подходят кандидату, по короткой карточке.
-
-{CANDIDATE_BRIEF}
+TRIAGE_INSTRUCTIONS = """Ты помогаешь отсеять вакансии, которые точно не подходят кандидату, по короткой карточке.
+Кто кандидат и что ему подходит, написано в тегах <candidate>.
 
 Карточка неполная: нет описания и требований. Отсеивай только явные несовпадения по роли
 или направлению. Если сомневаешься, пропускай дальше (relevant = true): решение примет
@@ -45,10 +39,8 @@ TRIAGE_SYSTEM = f"""Ты помогаешь отсеять вакансии, к�
 # записывался заново. За час между оценками проходит в 9 случаях из 10 (данные 2026-10-28).
 CACHE_1H = {"type": "ephemeral", "ttl": "1h"}
 
-PREFILTER_INSTRUCTIONS = f"""Ты решаешь, отсеять ли вакансию до дорогой оценки. Перед тобой полный текст
-вакансии, критерии поиска и кратко о кандидате.
-
-{CANDIDATE_BRIEF}
+PREFILTER_INSTRUCTIONS = """Ты решаешь, отсеять ли вакансию до дорогой оценки. Перед тобой полный текст
+вакансии и критерии поиска с описанием кандидата.
 
 Ответ из двух полей, по порядку.
 
@@ -252,6 +244,17 @@ def load_knowledge(knowledge_dir: Path) -> dict[str, str]:
     return out
 
 
+def candidate_profile(criteria: str) -> str:
+    """Раздел «Критерии кандидата» из search_criteria.md, до следующего заголовка второго уровня."""
+    lines = criteria.splitlines()
+    try:
+        start = next(i for i, line in enumerate(lines) if line.strip() == PROFILE_HEADING)
+    except StopIteration:
+        raise ValueError(f"В search_criteria.md нет раздела «{PROFILE_HEADING}»") from None
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+    return "\n".join(lines[start:end]).strip()
+
+
 def resume_files(knowledge_dir: Path) -> list[Path]:
     """Файл опыта experience/Bachinin_Alexander_Experience.md, затем другие .md из experience/ (кроме README)."""
     folder = knowledge_dir / EXPERIENCE_DIR
@@ -304,9 +307,10 @@ class Scorer:
         self.scoring_model = scoring_model
         self.scoring_effort = scoring_effort
         kn = load_knowledge(knowledge_dir)
+        profile = candidate_profile(kn["criteria"])
+        self.triage_system = TRIAGE_INSTRUCTIONS + "\n\n<candidate>\n" + profile + "\n</candidate>"
         system = [
             SCORING_INSTRUCTIONS,
-            "<candidate_brief>\n" + CANDIDATE_BRIEF + "\n</candidate_brief>",
             "<search_criteria>\n" + kn["criteria"] + "\n</search_criteria>",
             # Первый файл — весь опыт кандидата. Раздел «Не засчитывать» в нём опытом не считается.
             "<resume>\n" + kn["resume"] + "\n</resume>",
@@ -323,7 +327,7 @@ class Scorer:
         resp = await self.client.messages.parse(
             model=self.triage_model,
             max_tokens=2000,
-            system=TRIAGE_SYSTEM,
+            system=self.triage_system,
             output_config={"effort": "low"},
             messages=[{"role": "user", "content": content}],
             output_format=Triage,

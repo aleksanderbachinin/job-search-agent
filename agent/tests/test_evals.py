@@ -28,6 +28,7 @@ class FakeScorer:
         self.fail = set(fail)
         self.prefilter_system = [{"type": "text", "text": prompt}]
         self.scoring_system = [{"type": "text", "text": "SCORING v1"}]
+        self.triage_system = "TRIAGE v1"
         self.calls: list[tuple[str, str]] = []
         self.in_flight = 0
         self.max_in_flight = 0

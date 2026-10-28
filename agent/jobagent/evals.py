@@ -20,7 +20,6 @@ import aiosqlite
 from . import rules
 from .config import AGENT_DIR
 from .db import Vacancy
-from .scoring import TRIAGE_SYSTEM
 
 STEPS = ("triage", "prefilter", "scoring")
 FILTER_STEPS = ("triage", "prefilter")
@@ -194,7 +193,7 @@ def summarize(step: str, items: list[dict[str, Any]], min_score: int = 4) -> dic
 
 def prompt_text(scorer: Any, step: str) -> str:
     if step == "triage":
-        return TRIAGE_SYSTEM
+        return scorer.triage_system
     blocks = scorer.prefilter_system if step == "prefilter" else scorer.scoring_system
     return "\n\n".join(b["text"] for b in blocks)
 
