@@ -1,0 +1,980 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Агент отбора вакансий</title>
+<style>
+:root {
+  --bg: #f6f5f1;
+  --surface: #ffffff;
+  --surface-2: #efede7;
+  --text: #1d1c1a;
+  --muted: #6b6860;
+  --border: #dcd8cf;
+  --accent: #2f5fd0;
+  --accent-soft: #e4ebfb;
+  --ok: #1f8a4c;
+  --ok-soft: #dff2e6;
+  --bad: #c2412d;
+  --bad-soft: #f8e3df;
+  --warn: #a86a00;
+  --warn-soft: #f6ecd6;
+  --tg: #e7f0f8;
+  --tg-btn: #d5e4f1;
+  --shadow: 0 1px 2px rgba(0,0,0,.05), 0 4px 16px rgba(0,0,0,.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161614;
+    --surface: #201f1d;
+    --surface-2: #2a2926;
+    --text: #ecebe6;
+    --muted: #a19e95;
+    --border: #3a3834;
+    --accent: #7ea2f2;
+    --accent-soft: #24304a;
+    --ok: #5cc98a;
+    --ok-soft: #1c3427;
+    --bad: #ef8a77;
+    --bad-soft: #3d2420;
+    --warn: #e0ac4e;
+    --warn-soft: #3a2f1a;
+    --tg: #1f2a35;
+    --tg-btn: #2a3a4a;
+    --shadow: none;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #161614;
+  --surface: #201f1d;
+  --surface-2: #2a2926;
+  --text: #ecebe6;
+  --muted: #a19e95;
+  --border: #3a3834;
+  --accent: #7ea2f2;
+  --accent-soft: #24304a;
+  --ok: #5cc98a;
+  --ok-soft: #1c3427;
+  --bad: #ef8a77;
+  --bad-soft: #3d2420;
+  --warn: #e0ac4e;
+  --warn-soft: #3a2f1a;
+  --tg: #1f2a35;
+  --tg-btn: #2a3a4a;
+  --shadow: none;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+main { max-width: 1040px; margin: 0 auto; padding: 32px 16px 80px; }
+h1 { font-size: 30px; line-height: 1.2; margin: 0 0 8px; letter-spacing: -.01em; }
+h2 { font-size: 22px; margin: 56px 0 6px; letter-spacing: -.01em; }
+h2 .num { color: var(--muted); font-weight: 500; margin-right: 6px; }
+h3 { font-size: 16px; margin: 0 0 6px; }
+p { margin: 0 0 12px; }
+.lead { color: var(--muted); max-width: 720px; margin-bottom: 18px; }
+.sub { color: var(--muted); margin: 0 0 18px; max-width: 760px; }
+code { font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
+.chip { font-size: 13px; padding: 3px 10px; border-radius: 999px; background: var(--surface-2); color: var(--muted); }
+.chip.ok { background: var(--ok-soft); color: var(--ok); }
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 20px; box-shadow: var(--shadow); }
+.keypoints { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 20px; }
+.keypoints .panel { padding: 16px; }
+.keypoints p { color: var(--muted); font-size: 14px; margin: 0; }
+nav.toc { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 14px; margin-top: 20px; }
+nav.toc a { color: var(--accent); text-decoration: none; }
+nav.toc a:hover { text-decoration: underline; }
+
+/* Архитектура */
+.scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.arch svg { display: block; width: 100%; min-width: 760px; height: auto; }
+.arch .box { fill: var(--surface); stroke: var(--border); stroke-width: 1.2; }
+.arch .box.ext { fill: var(--surface-2); }
+.arch .box.core { fill: var(--accent-soft); stroke: var(--accent); }
+.arch .zone { fill: none; stroke: var(--muted); stroke-dasharray: 5 5; stroke-width: 1; }
+.arch .t { fill: var(--text); font-size: 15px; font-weight: 600; }
+.arch .s { fill: var(--muted); font-size: 12.5px; }
+.arch .zl { fill: var(--muted); font-size: 12.5px; font-weight: 600; letter-spacing: .02em; }
+.arch .wire { fill: none; stroke: var(--muted); stroke-width: 1.4; }
+.arch .wire.back { stroke-dasharray: 4 4; }
+.arch .dot { fill: var(--accent); }
+.arch .dot.back { fill: var(--warn); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); margin-top: 10px; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+
+/* Воронка */
+.sim-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
+button.btn {
+  font: inherit; font-size: 14px; cursor: pointer;
+  padding: 8px 14px; border-radius: 10px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text);
+}
+button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+:root[data-theme="dark"] button.btn.primary { color: #10131a; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) button.btn.primary { color: #10131a; } }
+button.btn:disabled { opacity: .5; cursor: default; }
+.sim-note { font-size: 13px; color: var(--muted); }
+.now {
+  min-height: 44px; display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; border-radius: 10px; background: var(--surface-2); margin-bottom: 14px; font-size: 14px;
+}
+.now b { font-weight: 600; }
+.stages { display: flex; flex-direction: column; gap: 8px; }
+.stage {
+  display: grid; grid-template-columns: 34px minmax(0, 1fr) 210px; gap: 14px; align-items: start;
+  padding: 14px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface);
+  transition: border-color .2s, background .2s;
+}
+.stage.active { border-color: var(--accent); background: var(--accent-soft); }
+.stage.hit { border-color: var(--bad); background: var(--bad-soft); }
+.stage.win { border-color: var(--ok); background: var(--ok-soft); }
+.stage .n {
+  width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--surface-2); font-weight: 600; font-size: 14px;
+}
+.stage .head { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.stage .cost { font-size: 12.5px; color: var(--muted); }
+.stage ul { margin: 6px 0 0; padding-left: 18px; font-size: 14px; }
+.stage li { margin: 2px 0; }
+.stage .where { font-size: 13px; color: var(--muted); margin-top: 6px; }
+.meter { font-size: 13px; }
+.meter .bar { height: 8px; border-radius: 4px; background: var(--surface-2); overflow: hidden; margin: 6px 0 4px; }
+.meter .bar span { display: block; height: 100%; width: 0; background: var(--ok); transition: width .3s; }
+.meter .nums { display: flex; justify-content: space-between; color: var(--muted); }
+.meter .nums .r { color: var(--bad); }
+.meter .nums .s2 { color: var(--muted); }
+.stage .n.sm { font-size: 12px; }
+.msg .sep { border-top: 1px solid var(--border); margin: 8px 0; padding-top: 8px; }
+.msg a { color: var(--accent); }
+.feed { margin-top: 14px; display: flex; flex-direction: column; gap: 4px; font-size: 14px; max-height: 260px; overflow: auto; }
+.feed div { padding: 6px 10px; border-radius: 8px; background: var(--surface-2); }
+.feed .good { background: var(--ok-soft); }
+.tag { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px; margin-right: 6px; }
+.tag.r { background: var(--bad-soft); color: var(--bad); }
+.tag.g { background: var(--ok-soft); color: var(--ok); }
+
+/* Время */
+.timeline { display: grid; grid-template-columns: 2.2fr .6fr 1fr; gap: 4px; margin: 10px 0 8px; }
+.timeline div { padding: 10px 12px; border-radius: 8px; font-size: 14px; }
+.timeline .a { background: var(--surface-2); }
+.timeline .b { background: var(--accent-soft); }
+.timeline .c { background: var(--ok-soft); }
+.timeline small { display: block; color: var(--muted); font-size: 12.5px; }
+.facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 14px; }
+.facts .panel { padding: 14px; font-size: 14px; }
+.facts .big { font-size: 24px; font-weight: 600; display: block; }
+
+/* Карточка */
+.cardwrap { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+.tg { background: var(--tg); border-radius: 16px; padding: 14px; }
+.msg { background: var(--surface); border-radius: 12px; padding: 12px 14px; font-size: 14px; line-height: 1.5; }
+.msg p { margin: 0 0 6px; }
+.msg .it { font-style: italic; color: var(--muted); }
+.kb { display: grid; gap: 4px; margin-top: 6px; }
+.kb .row { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px; }
+.kb button {
+  font: inherit; font-size: 13.5px; padding: 8px 6px; border: 0; border-radius: 8px; cursor: pointer;
+  background: var(--tg-btn); color: var(--text);
+}
+.kb button.static { cursor: default; font-weight: 600; }
+.log { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+.log div { padding: 8px 10px; border-left: 3px solid var(--accent); background: var(--surface); border-radius: 0 8px 8px 0; }
+.log .hint { border-color: var(--border); color: var(--muted); }
+
+/* Статусы */
+.states svg { display: block; width: 100%; min-width: 760px; height: auto; }
+.states .box { stroke-width: 1.2; }
+.states .q { fill: var(--surface-2); stroke: var(--border); }
+.states .r { fill: var(--bad-soft); stroke: var(--bad); }
+.states .g { fill: var(--ok-soft); stroke: var(--ok); }
+.states .a { fill: var(--accent-soft); stroke: var(--accent); }
+.states .t { fill: var(--text); font-size: 14px; font-weight: 600; }
+.states .s { fill: var(--muted); font-size: 12px; }
+.states .wire { fill: none; stroke: var(--muted); stroke-width: 1.3; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { color: var(--muted); font-weight: 500; font-size: 13px; }
+
+/* Рычаги */
+.levers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.levers .panel { padding: 16px; }
+.levers .how { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+.levers ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; font-size: 14px; }
+.levers li span { display: block; color: var(--muted); font-size: 13px; }
+.badge { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 6px; margin-bottom: 8px; }
+.badge.now { background: var(--ok-soft); color: var(--ok); }
+.badge.restart { background: var(--warn-soft); color: var(--warn); }
+.badge.deploy { background: var(--accent-soft); color: var(--accent); }
+.cmd { margin-top: 12px; font-size: 14px; }
+.cmd pre { margin: 6px 0 0; padding: 10px 12px; border-radius: 8px; background: var(--surface-2); overflow-x: auto; font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+/* Обучение */
+.loop { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; }
+.loop .step { flex: 1 1 150px; padding: 12px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border); font-size: 14px; }
+.loop .step b { display: block; margin-bottom: 2px; }
+.loop .step.plan { border-style: dashed; color: var(--muted); background: transparent; }
+.loop .arrow { align-self: center; color: var(--muted); }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
+.two ul { margin: 6px 0 0; padding-left: 18px; font-size: 14px; }
+.two li { margin: 4px 0; }
+
+@media (max-width: 820px) {
+  .keypoints, .facts, .levers, .two { grid-template-columns: 1fr; }
+  .cardwrap { grid-template-columns: 1fr; }
+  .stage { grid-template-columns: 30px minmax(0, 1fr); }
+  .stage .meter { grid-column: 2; }
+  .timeline { grid-template-columns: 1fr; }
+  .loop .arrow { transform: rotate(90deg); width: 100%; text-align: center; }
+  h1 { font-size: 25px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .arch .dot { display: none; }
+  * { transition: none !important; }
+}
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <div class="chips">
+    <span class="chip ok">● работает 24/7</span>
+    <span class="chip">этап MVP-1 «отбор»</span>
+    <span class="chip">запущен 26.10.2026</span>
+    <span class="chip">обновлено 28.10.2026</span>
+  </div>
+  <h1>Как работает агент отбора вакансий</h1>
+  <p class="lead">Агент получает новые вакансии из ваших шести фильтров Hirify, отсеивает неподходящие, для англоязычных вакансий проверяет команду компании в LinkedIn и присылает остальные в Telegram-бот @alexsearchjob_bot. Резюме и сопроводительные письма он пока не готовит, это следующий этап.</p>
+
+  <div class="keypoints">
+    <div class="panel"><h3>Пять ступеней отсева</h3><p>От бесплатной к самой дорогой, плюс LinkedIn-проверка перед оценкой. В бот попадают только вакансии с оценкой 4 и 5 из 5.</p></div>
+    <div class="panel"><h3>Ничего не уходит работодателю</h3><p>Откликаетесь вы сами. Агент читает вакансии, пишет ваши решения в трекер Hirify, скрывает пропущенные и раскрывает контакт только по вашей кнопке.</p></div>
+    <div class="panel"><h3>Самообучения пока нет</h3><p>Агент копит ваши решения с причинами. На отбор влияете вы: правками файлов и примерами откликов.</p></div>
+  </div>
+
+  <nav class="toc">
+    <a href="#arch">1. Схема</a>
+    <a href="#funnel">2. Отсев по шагам</a>
+    <a href="#timing">3. Скорость</a>
+    <a href="#card">4. Карточка и кнопки</a>
+    <a href="#tracking">5. Трекинг</a>
+    <a href="#levers">6. Как управлять</a>
+    <a href="#learning">7. Обучение</a>
+    <a href="#later">8. Что дальше</a>
+  </nav>
+</header>
+
+<!-- 1. Архитектура -->
+<section id="arch">
+  <h2><span class="num">1</span>Общая схема</h2>
+  <p class="sub">Всё работает одним процессом на вашем сервере в Таллине, рядом с VPN, которого агент не касается. Точки на линиях показывают, куда идут данные.</p>
+  <div class="panel arch">
+    <div class="scroll-x">
+    <svg viewBox="0 0 960 430" role="img" aria-label="Схема: Hirify отправляет вебхук на сервер, сервер кладёт вакансию в очередь, воркер оценивает её через Claude и отправляет карточку в Telegram">
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
+        </marker>
+      </defs>
+
+      <!-- Hirify -->
+      <rect class="box ext" x="20" y="40" width="200" height="140" rx="12"/>
+      <text class="t" x="38" y="72">Hirify</text>
+      <text class="s" x="38" y="96">6 сохранённых фильтров</text>
+      <text class="s" x="38" y="118">вебхук о новой вакансии</text>
+      <text class="s" x="38" y="140">API: вакансии, трекер,</text>
+      <text class="s" x="38" y="160">скрытие, контакты</text>
+
+      <!-- Сервер -->
+      <rect class="zone" x="262" y="16" width="452" height="398" rx="16"/>
+      <text class="zl" x="282" y="40">СЕРВЕР В ТАЛЛИНЕ · systemd</text>
+
+      <rect class="box" x="282" y="56" width="128" height="62" rx="10"/>
+      <text class="t" x="298" y="82">Caddy</text>
+      <text class="s" x="298" y="104">HTTPS</text>
+
+      <rect class="box core" x="436" y="56" width="258" height="62" rx="10"/>
+      <text class="t" x="452" y="82">Приём вебхука</text>
+      <text class="s" x="452" y="104">подпись · повторы · склейка</text>
+
+      <rect class="box" x="282" y="138" width="128" height="58" rx="10"/>
+      <text class="t" x="298" y="162">Опрос</text>
+      <text class="s" x="298" y="183">раз в 12 часов</text>
+
+      <rect class="box" x="282" y="218" width="412" height="52" rx="10"/>
+      <text class="t" x="298" y="249">Очередь и события</text>
+      <text class="s" x="452" y="249">SQLite: вакансии, решения, статистика</text>
+
+      <rect class="box core" x="282" y="292" width="412" height="52" rx="10"/>
+      <text class="t" x="298" y="323">Воркер</text>
+      <text class="s" x="372" y="323">правила → Haiku → текст → LinkedIn → Sonnet</text>
+
+      <rect class="box core" x="282" y="360" width="412" height="44" rx="10"/>
+      <text class="t" x="298" y="387">Telegram-бот</text>
+      <text class="s" x="410" y="387">карточки · кнопки · контакт · /stats</text>
+
+      <!-- Внешние справа -->
+      <rect class="box ext" x="750" y="180" width="190" height="76" rx="12"/>
+      <text class="t" x="768" y="208">ScrapeCreators</text>
+      <text class="s" x="768" y="230">LinkedIn через Google:</text>
+      <text class="s" x="768" y="247">люди и страница компании</text>
+
+      <rect class="box ext" x="750" y="270" width="190" height="72" rx="12"/>
+      <text class="t" x="768" y="299">Claude API</text>
+      <text class="s" x="768" y="322">Haiku и Sonnet</text>
+
+      <rect class="box ext" x="750" y="356" width="190" height="58" rx="12"/>
+      <text class="t" x="768" y="381">Telegram</text>
+      <text class="s" x="768" y="401">вы и кнопки</text>
+
+      <!-- Провода -->
+      <path id="w1" class="wire" d="M220 87 L282 87" marker-end="url(#ah)"/>
+      <path id="w2" class="wire" d="M410 87 L436 87" marker-end="url(#ah)"/>
+      <path id="w3" class="wire" d="M565 118 L565 218" marker-end="url(#ah)"/>
+      <path id="w4" class="wire" d="M346 196 L346 218" marker-end="url(#ah)"/>
+      <path id="w5" class="wire back" d="M282 167 L220 150" marker-end="url(#ah)"/>
+      <path id="w6" class="wire" d="M488 270 L488 292" marker-end="url(#ah)"/>
+      <path id="w7" class="wire" d="M694 312 L750 306" marker-end="url(#ah)"/>
+      <path id="w8" class="wire" d="M488 344 L488 360" marker-end="url(#ah)"/>
+      <path id="w9" class="wire" d="M694 384 L750 384" marker-end="url(#ah)"/>
+      <path id="w10" class="wire back" d="M282 318 C 140 318, 120 270, 120 180" marker-end="url(#ah)"/>
+      <path id="w11" class="wire" d="M694 300 C 722 300, 722 218, 750 218" marker-end="url(#ah)"/>
+      <path id="w12" class="wire back" d="M282 382 C 60 382, 40 300, 40 180" marker-end="url(#ah)"/>
+      <text class="s" x="146" y="250">чтение</text>
+      <text class="s" x="146" y="268">вакансии</text>
+      <text class="s" x="60" y="406">трекер, скрытие, контакт:</text>
+      <text class="s" x="60" y="423">по вашим кнопкам</text>
+
+      <!-- Бегущие точки -->
+      <circle class="dot" r="4"><animateMotion dur="5s" repeatCount="indefinite" keyPoints="0;1;1" keyTimes="0;.12;1" calcMode="linear"><mpath href="#w1"/></animateMotion></circle>
+      <circle class="dot" r="4"><animateMotion dur="5s" begin=".6s" repeatCount="indefinite" keyPoints="0;1;1" keyTimes="0;.06;1" calcMode="linear"><mpath href="#w2"/></animateMotion></circle>
+      <circle class="dot" r="4"><animateMotion dur="5s" begin=".9s" repeatCount="indefinite" keyPoints="0;1;1" keyTimes="0;.14;1" calcMode="linear"><mpath href="#w3"/></animateMotion></circle>
+      <circle class="dot" r="4"><animateMotion dur="5s" begin="1.6s" repeatCount="indefinite" keyPoints="0;1;1" keyTimes="0;.06;1" calcMode="linear"><mpath href="#w6"/></animateMotion></circle>
+      <circle class="dot back" r="4"><animateMotion dur="5s" begin="2s" repeatCount="indefinite" keyPoints="0;1;1" keyTimes="0;.2;1" calcMode="linear"><mpath href="#w10"/></animateMotion></circle>
+      <circle class="dot" r="4"><animateMotion dur="5s" begin="2.3s" repeatCount="indefinite" keyPoints="0;1;1" keyTimes="0;.08;1" calcMode="linear"><mpath href="#w11"/></animateMotion></circle>
+      <circle class="dot back" r="4"><animateMotion dur="5s" begin="4.2s" repeatCount="indefinite" keyPoints="0;1;1" keyTimes="0;.16;1" calcMode="linear"><mpath href="#w12"/></animateMotion></circle>
+      <circle class="dot" r="4"><animateMotion dur="5s" begin="2.6s" repeatCount="indefinite" keyPoints="0;1;1" keyTimes="0;.08;1" calcMode="linear"><mpath href="#w7"/></animateMotion></circle>
+      <circle class="dot" r="4"><animateMotion dur="5s" begin="3.4s" repeatCount="indefinite" keyPoints="0;1;1" keyTimes="0;.06;1" calcMode="linear"><mpath href="#w8"/></animateMotion></circle>
+      <circle class="dot" r="4"><animateMotion dur="5s" begin="3.8s" repeatCount="indefinite" keyPoints="0;1;1" keyTimes="0;.08;1" calcMode="linear"><mpath href="#w9"/></animateMotion></circle>
+    </svg>
+    </div>
+    <div class="legend">
+      <span><i style="background:var(--accent)"></i>новая вакансия идёт к вам</span>
+      <span><i style="background:var(--warn)"></i>агент обращается в Hirify</span>
+      <span>Наружу открыты только адрес вебхука и проверка здоровья</span>
+    </div>
+  </div>
+
+  <div class="two">
+    <div class="panel">
+      <h3>Как вакансия попадает в агента</h3>
+      <ul>
+        <li><b>Вебхук, основной путь.</b> Hirify сам присылает новую вакансию из фильтра. Агент проверяет подпись и склеивает дубли: вакансия из трёх фильтров обрабатывается один раз.</li>
+        <li><b>Опрос раз в 12 часов.</b> Читает первые 2 страницы каждого фильтра и добирает пропущенное, например пока сервер лежал. Весь фильтр не листает: Hirify считает это копированием каталога.</li>
+        <li><b>Разметка при первом запуске.</b> 410 вакансий, которые уже лежали в фильтрах, помечены «уже было» и не оцениваются.</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h3>Из чего состоит код</h3>
+      <table>
+        <tr><td><code>ingest.py</code></td><td>приём, подпись, опрос</td></tr>
+        <tr><td><code>rules.py</code></td><td>отсев без LLM, украинский язык</td></tr>
+        <tr><td><code>scoring.py</code></td><td>промпты, Haiku и Sonnet</td></tr>
+        <tr><td><code>research.py</code></td><td>RU-проверка по LinkedIn</td></tr>
+        <tr><td><code>pipeline.py</code></td><td>порядок ступеней, сбои</td></tr>
+        <tr><td><code>cards.py</code>, <code>bot.py</code></td><td>карточка, кнопки, контакт, /stats</td></tr>
+        <tr><td><code>db.py</code>, <code>hirify.py</code></td><td>база и клиент Hirify</td></tr>
+        <tr><td><code>config.py</code>, <code>cli.py</code></td><td>настройки, <code>dry-run</code>, <code>setup-webhook</code></td></tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- 2. Воронка -->
+<section id="funnel">
+  <h2><span class="num">2</span>Отсев по шагам</h2>
+  <p class="sub">Каждая следующая ступень дороже предыдущей, поэтому дешёвые отсекают очевидное раньше. Нажмите «Прогнать», чтобы увидеть, как 15 примерных вакансий проходят воронку. Шесть из них настоящие: пять пришли 26.10, XPN из пробного прогона. Остальные придуманы для наглядности, как и результаты шага LinkedIn.</p>
+  <div class="panel">
+    <div class="sim-controls">
+      <button class="btn primary" id="play">▶ Прогнать 15 вакансий</button>
+      <button class="btn" id="reset">Сбросить</button>
+      <span class="sim-note" id="progress">0 из 15</span>
+    </div>
+    <div class="now" id="now"><span class="sim-note">Здесь появится вакансия, которую агент разбирает прямо сейчас</span></div>
+
+    <div class="stages" id="stages">
+      <div class="stage" data-stage="rules">
+        <div class="n">1</div>
+        <div>
+          <div class="head"><h3>Правила по карточке</h3><span class="cost">бесплатно, без открытия вакансии</span></div>
+          <ul>
+            <li>уже откликались через Hirify или вакансия уже в трекере;</li>
+            <li>все грейды из trainee, intern, junior (junior + middle проходит);</li>
+            <li>вакансия на украинском: разметка Hirify <code>ua</code> или буквы і, ї, є, ґ больше 2% кириллицы (с 27.10);</li>
+            <li>дизайнер продукта, продуктовый или data-аналитик, data scientist, UX/UI;</li>
+            <li>developer, engineer, QA, DevOps, HR, sales, support, SMM, юрист и т.п., если в названии нет product, PM, PO, growth, marketing, CPO, builder. «AI Product Engineer» проходит, «Backend Engineer» нет.</li>
+          </ul>
+          <div class="where">Управление: <code>JUNIOR_GRADES</code>, <code>HARD_REJECT</code>, <code>KEEP</code>, <code>STOP</code> в <code>rules.py</code></div>
+        </div>
+        <div class="meter"><div class="bar"><span></span></div><div class="nums"><span class="p">прошло 0</span><span class="r">отсеяно 0</span></div></div>
+      </div>
+
+      <div class="stage" data-stage="haiku">
+        <div class="n">2</div>
+        <div>
+          <div class="head"><h3>Haiku по карточке</h3><span class="cost">доли цента</span></div>
+          <ul>
+            <li>быстрая модель отсекает только явные несовпадения по роли и направлению;</li>
+            <li>при сомнении пропускает дальше: полного текста она не видит.</li>
+          </ul>
+          <div class="where">Управление: <code>CANDIDATE_BRIEF</code> в <code>scoring.py</code></div>
+        </div>
+        <div class="meter"><div class="bar"><span></span></div><div class="nums"><span class="p">прошло 0</span><span class="r">отсеяно 0</span></div></div>
+      </div>
+
+      <div class="stage" data-stage="read">
+        <div class="n">3</div>
+        <div>
+          <div class="head"><h3>Полный текст и свежесть</h3><span class="cost">1 открытие из 1000 в день</span></div>
+          <ul>
+            <li>агент открывает вакансию в Hirify и ещё раз проверяет, не откликались ли вы;</li>
+            <li>повторная проверка на украинский язык, уже по полному тексту;</li>
+            <li>вакансия старше 7 дней отсеивается.</li>
+          </ul>
+          <div class="where">Управление: <code>MAX_AGE_DAYS</code> в <code>.env</code></div>
+        </div>
+        <div class="meter"><div class="bar"><span></span></div><div class="nums"><span class="p">прошло 0</span><span class="r">отсеяно 0</span></div></div>
+      </div>
+
+      <div class="stage" data-stage="linkedin">
+        <div class="n sm">3а</div>
+        <div>
+          <div class="head"><h3>LinkedIn-проверка компании</h3><span class="cost">3 кредита ScrapeCreators, ничего не отсеивает</span></div>
+          <ul>
+            <li>нужна только англоязычным вакансиям компаний не из России. Пропускается, если текст на русском, в регионах Россия или компания скрыта;</li>
+            <li>Google-поиск <code>site:linkedin.com/in "компания"</code>: до 10 сотрудников с должностью, городом и вузом;</li>
+            <li>страница компании: штаб-квартира, размер, сайт;</li>
+            <li>кириллическое название пробуется в латинице и транслите, до трёх вариантов. Пустой поиск кредитов не стоит;</li>
+            <li>находки уходят в Sonnet для RU-метки. Если ScrapeCreators не ответил, оценка идёт по одному тексту.</li>
+          </ul>
+          <div class="where">Включается ключом <code>SCRAPECREATORS_API_KEY</code> в <code>.env</code>, код в <code>research.py</code></div>
+        </div>
+        <div class="meter"><div class="bar"><span></span></div><div class="nums"><span class="p">проверено 0</span><span class="s2">не нужна 0</span></div></div>
+      </div>
+
+      <div class="stage" data-stage="sonnet">
+        <div class="n">4</div>
+        <div>
+          <div class="head"><h3>Sonnet ставит оценку 1–5</h3><span class="cost">≈ 1,5 цента</span></div>
+          <ul>
+            <li>обязательные требования против фактов из файла опыта, без додумывания;</li>
+            <li>направление: роль и домен. Грейды от middle до C-level подходят;</li>
+            <li>условия: ЗП, гео, формат, релокация, язык. Цифра без валюты или периода считается вопросом;</li>
+            <li>стоп-факторы из критериев: одно попадание означает вето;</li>
+            <li>сигналы мошенничества;</li>
+            <li>RU-метка по тексту и данным LinkedIn: ✅ явно, 🟡 косвенно, ❓ компания скрыта, ❌ иностранная. На оценку сама не влияет, решение за вами.</li>
+          </ul>
+          <div class="where">Опирается на <code>search_criteria.md</code>, <code>experience/Bachinin_Alexander_Experience.md</code> (без пунктов «Не засчитывать») и <code>applied_examples.md</code>. Правила оценки: <code>SCORING_INSTRUCTIONS</code></div>
+        </div>
+        <div class="meter"><div class="bar"><span></span></div><div class="nums"><span class="p">прошло 0</span><span class="r">отсеяно 0</span></div></div>
+      </div>
+
+      <div class="stage" data-stage="bot">
+        <div class="n">5</div>
+        <div>
+          <div class="head"><h3>Карточка в бот</h3><span class="cost">оценка 4 или 5</span></div>
+          <ul>
+            <li>всё ниже 4 остаётся в базе с причиной и попадает в /stats;</li>
+            <li>короткая карточка с выводом, доводами и кнопками, детали по «📋 Подробнее».</li>
+          </ul>
+          <div class="where">Порог: <code>MIN_SCORE</code> в <code>.env</code> (сейчас 4)</div>
+        </div>
+        <div class="meter"><div class="bar"><span></span></div><div class="nums"><span class="p">показано 0</span><span class="r"></span></div></div>
+      </div>
+    </div>
+
+    <div class="feed" id="feed"></div>
+  </div>
+</section>
+
+<!-- 3. Скорость -->
+<section id="timing">
+  <h2><span class="num">3</span>Сколько ждать карточку</h2>
+  <p class="sub">По реальным данным за 26.10. Время публикации означает момент, когда вакансия появилась на Hirify.</p>
+  <div class="panel">
+    <div class="timeline">
+      <div class="a"><b>1–2,5 мин</b><small>Hirify присылает вебхук. Задержка на их стороне</small></div>
+      <div class="b"><b>≈ 10 с</b><small>Агент оценивает. LinkedIn-проверка, если нужна, добавляет время</small></div>
+      <div class="c"><b>Карточка</b><small>если 4 или 5</small></div>
+    </div>
+    <div class="facts">
+      <div class="panel"><span class="big">≈ 2–3 мин</span>обычно от публикации до решения агента</div>
+      <div class="panel"><span class="big">до 15 мин</span>когда Hirify отвечает ошибкой 503: агент ждёт 2 минуты и пробует снова, вакансии идут по одной</div>
+      <div class="panel"><span class="big">до 12 ч</span>если вебхук не дошёл: вакансию подберёт опрос фильтров</div>
+    </div>
+  </div>
+</section>
+
+<!-- 4. Карточка -->
+<section id="card">
+  <h2><span class="num">4</span>Карточка и кнопки</h2>
+  <p class="sub">С 27.10 карточка короткая: решить «откликаться или нет» за несколько секунд. Остальное раскрывается кнопкой «📋 Подробнее», сообщение редактируется на месте. Сверху настоящая карточка DocsInBox, блок «Подробно» показан схематично. Кнопки нажимаются: справа видно, что агент сделает в ответ.</p>
+  <div class="cardwrap">
+    <div class="tg">
+      <div class="msg">
+        <p><b>5/5 · Product Owner (B2B)</b></p>
+        <p>DocsInBox (Доксинбокс) · RU ✅ Текст на русском, ТК РФ, офис в СПб, удалёнка из РФ</p>
+        <p>🔎 LinkedIn: Андрей Анфиногенов (DocsInbox 2017–2021, СПб); сотрудники из СПб, СПбГУ, Грузии…</p>
+        <p>🏠 удалёнка из России · 💰 не указана · middle · 🕒 сегодня</p>
+        <p><b>Отличное совпадение: B2B SaaS, MRR/churn/retention, удалёнка из России, русскоязычная компания.</b></p>
+        <p>➕ MRR, churn, retention → GPT Scrambler: lifecycle-письма подняли первое продление 43%→57%</p>
+        <p>➕ B2B SaaS, 3+ года PM → MPSTATS, Streasy, AEZAKMI: $18K MRR</p>
+        <p>➖ Нет опыта в регуляторике (ЕГАИС, Меркурий) и HoReCa, но это пожелание</p>
+        <p>❓ Уточнить: Вилка и бонус, Размер команды, Как откликнуться</p>
+        <p id="contactLine" hidden>📇 Контакт: <i>ссылка, @telegram или email из вакансии</i></p>
+        <div id="details" class="sep" hidden>
+          <p><b>📋 Подробно</b></p>
+          <p>📍 формат дословно из вакансии</p>
+          <p><b>Обязательные требования</b><br>✓ требование, закрытое фактом из опыта<br>✗ требование, которого в опыте нет</p>
+          <p><b>RU ✅</b><br>полное обоснование метки, та же строка 🔎 LinkedIn<br>Сотрудники в LinkedIn: до 6 человек со ссылками на профиль, город и вуз<br>Страница компании: штаб-квартира, размер</p>
+          <p><b>Флаги</b><br>⚠️ тревожные сигналы, если есть</p>
+          <p class="it">Отклик: кнопка на Hirify или контакт в вакансии. Лента: название фильтра</p>
+        </div>
+      </div>
+      <div class="kb" id="kb"></div>
+    </div>
+    <div>
+      <div class="log" id="log"><div class="hint">Нажмите кнопку под карточкой</div></div>
+      <p class="sub" style="margin-top:14px">Порядок строк: оценка и роль; компания и RU-метка с короткими сигналами; что показал LinkedIn, если проверка нашла людей; формат, вилка, грейд, давность; вердикт; два довода «за» в виде «требование → факт»; один «против»; вопросы работодателю. Если всё не влезает в лимит Telegram (4096 символов), текст обрезается по строкам. Вид карточки задаётся в <code>cards.py</code>, кнопки в <code>bot.py</code>.</p>
+      <p class="sub"><b>Название для LinkedIn.</b> Google по кириллице («Доксинбокс») ничего не находит, поэтому агент пробует до трёх написаний: латинскую часть названия, похожее латинское слово из текста, транслит. Для DocsInBox так нашлись 10 сотрудников, включая основателя.</p>
+      <button class="btn" id="kbreset">Вернуть карточку в начало</button>
+    </div>
+  </div>
+</section>
+
+<!-- 5. Трекинг -->
+<section id="tracking">
+  <h2><span class="num">5</span>Трекинг</h2>
+  <p class="sub">У каждой вакансии есть статус, а каждый шаг пишется событием в базу. Из событий строится <code>/stats</code>: воронка за 7 дней и за всё время, <code>/stats 30</code> за 30 дней.</p>
+  <div class="panel states">
+    <div class="scroll-x">
+    <svg viewBox="0 0 960 280" role="img" aria-label="Статусы вакансии: в очереди, затем отсеяна, показана или ошибка; показанная становится откликом или пропуском; отклик получает этапы интервью, оффер или отказ">
+      <defs>
+        <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="var(--muted)"/>
+        </marker>
+      </defs>
+      <rect class="box q" x="20" y="112" width="150" height="56" rx="10"/>
+      <text class="t" x="36" y="137">В очереди</text><text class="s" x="36" y="156">queued</text>
+
+      <rect class="box r" x="240" y="20" width="200" height="66" rx="10"/>
+      <text class="t" x="256" y="45">Отсеяна</text><text class="s" x="256" y="64">rejected: отклик уже был,</text><text class="s" x="256" y="79">правила, Haiku, возраст, оценка</text>
+
+      <rect class="box a" x="240" y="112" width="200" height="56" rx="10"/>
+      <text class="t" x="256" y="137">Показана в боте</text><text class="s" x="256" y="156">shown</text>
+
+      <rect class="box q" x="240" y="200" width="200" height="56" rx="10"/>
+      <text class="t" x="256" y="225">Ошибка</text><text class="s" x="256" y="244">error: 3 сбоя, вам алерт</text>
+
+      <rect class="box g" x="510" y="62" width="170" height="56" rx="10"/>
+      <text class="t" x="526" y="87">Откликнулся</text><text class="s" x="526" y="106">applied → трекер Hirify</text>
+
+      <rect class="box q" x="510" y="160" width="170" height="56" rx="10"/>
+      <text class="t" x="526" y="185">Пропустил</text><text class="s" x="526" y="204">skipped + причина</text>
+
+      <rect class="box g" x="750" y="14" width="190" height="50" rx="10"/>
+      <text class="t" x="766" y="44">🎤 Интервью</text>
+      <rect class="box g" x="750" y="76" width="190" height="50" rx="10"/>
+      <text class="t" x="766" y="106">🎉 Оффер</text>
+      <rect class="box r" x="750" y="138" width="190" height="50" rx="10"/>
+      <text class="t" x="766" y="168">✖️ Отказ работодателя</text>
+      <text class="s" x="750" y="214">этапы тоже уходят в трекер Hirify</text>
+
+      <path class="wire" d="M170 130 C 205 130, 205 53, 240 53" marker-end="url(#ah2)"/>
+      <path class="wire" d="M170 140 L240 140" marker-end="url(#ah2)"/>
+      <path class="wire" d="M170 150 C 205 150, 205 228, 240 228" marker-end="url(#ah2)"/>
+      <path class="wire" d="M440 132 C 475 132, 475 90, 510 90" marker-end="url(#ah2)"/>
+      <path class="wire" d="M440 148 C 475 148, 475 188, 510 188" marker-end="url(#ah2)"/>
+      <path class="wire" d="M680 84 C 715 84, 715 39, 750 39" marker-end="url(#ah2)"/>
+      <path class="wire" d="M680 90 L750 101" marker-end="url(#ah2)"/>
+      <path class="wire" d="M680 96 C 715 96, 715 163, 750 163" marker-end="url(#ah2)"/>
+    </svg>
+    </div>
+    <p class="sim-note" style="margin-top:8px">Отдельно лежат вакансии со статусом «уже было» (baseline): их разметили при первом запуске и не оценивают.</p>
+  </div>
+
+  <div class="two">
+    <div class="panel">
+      <h3>События в базе</h3>
+      <table>
+        <tr><td><code>received</code></td><td>вакансия попала в очередь</td></tr>
+        <tr><td><code>rejected</code></td><td>отсеяна, со ступенью и причиной</td></tr>
+        <tr><td><code>llm</code></td><td>вызов Claude: модель и токены</td></tr>
+        <tr><td><code>research</code></td><td>LinkedIn-проверка: нашлось ли, сколько кредитов, или почему не нужна</td></tr>
+        <tr><td><code>shown</code></td><td>карточка ушла в бот</td></tr>
+        <tr><td><code>revealed</code></td><td>контакт раскрыт по кнопке «📇 Контакт»</td></tr>
+        <tr><td><code>applied</code>, <code>skipped</code></td><td>ваше решение и причина</td></tr>
+        <tr><td><code>interview</code>, <code>offer</code>, <code>rejected_by_employer</code></td><td>этап у работодателя</td></tr>
+        <tr><td><code>error</code></td><td>вакансия трижды не обработалась, вам алерт</td></tr>
+      </table>
+    </div>
+    <div class="panel">
+      <h3>Связь с трекером Hirify</h3>
+      <ul>
+        <li>Кнопки «Откликнулся» и этапы записываются в трекер на hirify.me.</li>
+        <li>Обратно агент пока не читает: этап, отмеченный на сайте, в <code>/stats</code> не попадёт.</li>
+        <li>Пропуск скрывает вакансию в Hirify. С причиной «Компания неинтересна» скрываются все вакансии компании.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 6. Рычаги -->
+<section id="levers">
+  <h2><span class="num">6</span>Как управлять отбором</h2>
+  <p class="sub">Рычаги сгруппированы по тому, как применяется правка. Проще всего попросить Claude Code: «подними порог до 5», «добавь стоп-слово». Он внесёт правку, проверит и выложит.</p>
+  <div class="levers">
+    <div class="panel">
+      <span class="badge now">Сразу</span>
+      <div class="how">Правите на сайте, агент ничего перезапускать не должен</div>
+      <ul>
+        <li>Фильтры на hirify.me<span>какие вакансии вообще приходят</span></li>
+        <li>Скрытые вакансии и компании<span>кнопка «Пропустить» в боте</span></li>
+      </ul>
+    </div>
+    <div class="panel">
+      <span class="badge restart">Перезапуск сервиса</span>
+      <div class="how">Настройки в <code>.env</code> на сервере</div>
+      <ul>
+        <li><code>MIN_SCORE</code> = 4<span>порог показа в бот</span></li>
+        <li><code>MAX_AGE_DAYS</code> = 7<span>максимальный возраст вакансии</span></li>
+        <li><code>HIRIFY_FEED_IDS</code><span>какие фильтры слушать, пусто значит все активные</span></li>
+        <li><code>SCRAPECREATORS_API_KEY</code><span>LinkedIn-проверка, пусто значит выключена</span></li>
+        <li><code>TRIAGE_MODEL</code>, <code>SCORING_MODEL</code>, <code>SCORING_EFFORT</code><span>модели и глубина рассуждения</span></li>
+        <li><code>RECONCILE_HOURS</code>, <code>RECONCILE_PAGES</code><span>частота и глубина опроса</span></li>
+      </ul>
+    </div>
+    <div class="panel">
+      <span class="badge deploy">Выкладка на сервер</span>
+      <div class="how">Файлы в папке «Agent Job Search»</div>
+      <ul>
+        <li><code>rules.py</code><span>стоп-слова, грейды, исключения, украинский</span></li>
+        <li><code>scoring.py</code><span>портрет кандидата и правила оценки</span></li>
+        <li><code>search_criteria.md</code><span>ваши критерии, стоп-факторы, методика RU-проверки</span></li>
+        <li><code>experience/…Experience.md</code><span>факты для сверки требований</span></li>
+        <li><code>applied_examples.md</code><span>образцы подходящих вакансий</span></li>
+        <li><code>cards.py</code>, <code>bot.py</code><span>вид карточки, причины, кнопки</span></li>
+      </ul>
+    </div>
+  </div>
+  <div class="cmd panel" style="margin-top:12px">
+    <b>Проверить правку на одной вакансии</b>, ничего не записывая в базу и бот:
+    <pre>cd "Agent Job Search/agent" && uv run python -m jobagent.cli dry-run &lt;vacancy_id&gt;</pre>
+    <div class="sim-note" style="margin-top:8px">Команда выкладки и работа с сервером описаны в HOW_IT_WORKS.md, раздел 5.</div>
+  </div>
+</section>
+
+<!-- 7. Обучение -->
+<section id="learning">
+  <h2><span class="num">7</span>Как агент обучается</h2>
+  <p class="sub">Сейчас цикл замыкаете вы: агент собирает сигналы, вы решаете, что поменять. Пунктиром показана часть, которая появится на этапе 6. И тогда агент только предлагает изменения, применяются они после вашего подтверждения.</p>
+  <div class="loop">
+    <div class="step"><b>Ваши решения</b>отклик, пропуск с причиной, этап у работодателя</div>
+    <div class="arrow">→</div>
+    <div class="step"><b>События в базе</b>рядом оценка и вывод модели</div>
+    <div class="arrow">→</div>
+    <div class="step"><b>/stats</b>где агент ошибается</div>
+    <div class="arrow">→</div>
+    <div class="step plan"><b>Агент предлагает</b>«из 12 вакансий с ❌ вы пропустили 11, ограничить оценку тройкой?»</div>
+    <div class="arrow">→</div>
+    <div class="step"><b>Правка с вашего согласия</b>критерии, порог, примеры, промпт</div>
+  </div>
+  <div class="two">
+    <div class="panel">
+      <h3>Работает сейчас</h3>
+      <ul>
+        <li><b>Примеры откликов</b> в <code>applied_examples.md</code> модель читает при каждой оценке. Это главный рычаг: чем больше ваших реальных откликов с пометкой, почему подошло, тем точнее оценка.</li>
+        <li><b>Скрытие в Hirify:</b> пропущенная вакансия или компания больше не придёт.</li>
+        <li><b>Сбор сигналов</b> для будущей калибровки.</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h3>Запланировано</h3>
+      <ul>
+        <li>Анализ расхождений между оценкой агента и вашими решениями.</li>
+        <li>Версии промптов и правил с историей, чтобы сравнивать до и после.</li>
+        <li>A/B-тест формулировок сопроводительных.</li>
+        <li>Ответы работодателей из трекера Hirify и почты.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 8. Дальше -->
+<section id="later">
+  <h2><span class="num">8</span>Чего агент пока не делает</h2>
+  <p class="sub">Уже сделано 27.10: LinkedIn-проверка компании, кнопка «📇 Контакт», короткая карточка с «Подробнее», отсев вакансий на украинском.</p>
+  <div class="panel">
+    <table>
+      <tr><th>Возможность</th><th>Когда</th></tr>
+      <tr><td>Резюме под вакансию, сопроводительное, карта опыта</td><td>MVP-2</td></tr>
+      <tr><td>Ежедневная сводка, недельный отчёт, чтение статусов из трекера Hirify</td><td>Этап 3</td></tr>
+      <tr><td>RU-проверка по сайту компании и hh.ru (LinkedIn уже есть)</td><td>Этап 4</td></tr>
+      <tr><td>Поиск нанимающих в LinkedIn и готовые сообщения</td><td>Этап 4</td></tr>
+      <tr><td>Автоотклик через Hirify с подтверждением</td><td>Этап 5</td></tr>
+      <tr><td>Предложения по калибровке на основе статистики</td><td>Этап 6</td></tr>
+    </table>
+  </div>
+</section>
+
+</main>
+
+<script>
+(function () {
+  // ---------- Воронка ----------
+  var ORDER = ["rules", "haiku", "read", "linkedin", "sonnet", "bot"];
+  // li: true — LinkedIn-проверка нужна (англоязычная вакансия, компания не из России).
+  var SAMPLES = [
+    { t: "Product Director, Player Platform", c: "iGaming", stop: "sonnet", score: 1, why: "iGaming, стоп-фактор", real: true, li: true },
+    { t: "Senior Product Designer", c: "Fintech", stop: "rules", why: "дизайн-роль" },
+    { t: "Junior Product Manager", c: "Marketplace", stop: "rules", why: "грейд junior" },
+    { t: "Senior Product Manager (антидетект-браузер)", c: "XPN", stop: null, score: 5, why: "почти точное попадание", real: true },
+    { t: "Backend Engineer (Go)", c: "SaaS", stop: "rules", why: "разработка, нет слова product" },
+    { t: "Менеджер з продукту", c: "Ритейл", stop: "rules", why: "вакансия на украинском" },
+    { t: "Marketing Manager, офлайн-ритейл", c: "Retail", stop: "haiku", why: "офлайн-маркетинг, не продукт" },
+    { t: "CPO, iGaming Product", c: "iGaming", stop: "sonnet", score: 2, why: "iGaming, стоп-фактор", real: true, li: true },
+    { t: "Growth Product Manager", c: "B2B SaaS", stop: null, score: 4, why: "growth и активация совпадают, в LinkedIn русскоязычные основатели", li: true },
+    { t: "Product Owner, банк", c: "Банк", stop: "read", why: "опубликована 12 дней назад" },
+    { t: "AI Product Manager", c: "", stop: "sonnet", score: 3, why: "на грани", real: true },
+    { t: "Product Analyst", c: "E-commerce", stop: "rules", why: "аналитика" },
+    { t: "Middle Performance Marketer (AI)", c: "", stop: "sonnet", score: 2, why: "middle performance, низкая ЗП", real: true },
+    { t: "Product Manager", c: "EdTech", stop: "rules", why: "уже откликались" },
+    { t: "Менеджер по продукту AI", c: "", stop: "sonnet", score: 3, why: "на грани", real: true }
+  ];
+  var STEP_MS = 420;
+  var runId = 0;
+  var stats;
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var stageEl = function (id) { return $('.stage[data-stage="' + id + '"]'); };
+  var now = $("#now"), feed = $("#feed"), progress = $("#progress"), play = $("#play");
+  var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+
+  function esc(s) { var d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+
+  function resetSim() {
+    runId++;
+    stats = {};
+    ORDER.forEach(function (id) { stats[id] = { pass: 0, rej: 0, checked: 0 }; });
+    document.querySelectorAll(".stage").forEach(function (el) { el.classList.remove("active", "hit", "win"); });
+    feed.innerHTML = "";
+    now.innerHTML = '<span class="sim-note">Здесь появится вакансия, которую агент разбирает прямо сейчас</span>';
+    progress.textContent = "0 из " + SAMPLES.length;
+    play.disabled = false;
+    render();
+  }
+
+  function render() {
+    var total = SAMPLES.length;
+    ORDER.forEach(function (id) {
+      var el = stageEl(id), s = stats[id];
+      $(".bar span", el).style.width = (s.pass / total * 100) + "%";
+      if (id === "bot") {
+        $(".p", el).textContent = "показано " + s.pass;
+      } else if (id === "linkedin") {
+        $(".bar span", el).style.width = (s.checked / total * 100) + "%";
+        $(".p", el).textContent = "проверено " + s.checked;
+        $(".s2", el).textContent = "не нужна " + (s.pass - s.checked);
+      } else {
+        $(".p", el).textContent = "прошло " + s.pass;
+        $(".r", el).textContent = "отсеяно " + s.rej;
+      }
+    });
+  }
+
+  function clearMarks() {
+    document.querySelectorAll(".stage").forEach(function (el) { el.classList.remove("active", "hit", "win"); });
+  }
+
+  async function runSim() {
+    var my = ++runId;
+    play.disabled = true;
+    for (var i = 0; i < SAMPLES.length; i++) {
+      var v = SAMPLES[i];
+      now.innerHTML = "Разбираю: <b>" + esc(v.t) + "</b>" + (v.c ? " · " + esc(v.c) : "") +
+        (v.real ? ' <span class="tag g">настоящая</span>' : "");
+      for (var k = 0; k < ORDER.length; k++) {
+        var id = ORDER[k];
+        clearMarks();
+        var el = stageEl(id);
+        el.classList.add("active");
+        await sleep(STEP_MS);
+        if (my !== runId) return;
+        if (v.stop === id) {
+          el.classList.remove("active");
+          el.classList.add("hit");
+          stats[id].rej++;
+          render();
+          addFeed(v, id);
+          await sleep(STEP_MS);
+          break;
+        }
+        stats[id].pass++;
+        if (id === "linkedin" && v.li) stats[id].checked++;
+        render();
+        if (id === "bot") {
+          el.classList.remove("active");
+          el.classList.add("win");
+          addFeed(v, id);
+          await sleep(STEP_MS * 1.6);
+        }
+      }
+      if (my !== runId) return;
+      progress.textContent = (i + 1) + " из " + SAMPLES.length;
+    }
+    clearMarks();
+    var shown = stats.bot.pass;
+    now.innerHTML = "Готово: из " + SAMPLES.length + " вакансий в бот пришло <b>" + shown + "</b>. Остальные лежат в базе с причиной.";
+    play.disabled = false;
+    play.textContent = "▶ Прогнать ещё раз";
+  }
+
+  var NAMES = { rules: "правила", haiku: "Haiku", read: "полный текст", sonnet: "оценка" };
+  function addFeed(v, id) {
+    var d = document.createElement("div");
+    var title = esc(v.t) + (v.c ? " · " + esc(v.c) : "");
+    if (id === "bot") {
+      d.className = "good";
+      d.innerHTML = '<span class="tag g">' + v.score + '/5 → бот</span>' + title + " — " + esc(v.why);
+    } else {
+      var label = NAMES[id] + (v.score ? " " + v.score + "/5" : "");
+      d.innerHTML = '<span class="tag r">' + label + '</span>' + title + " — " + esc(v.why);
+    }
+    feed.prepend(d);
+  }
+
+  play.addEventListener("click", function () {
+    if (stats.bot.pass || feed.children.length) { resetSim(); }
+    runSim();
+  });
+  $("#reset").addEventListener("click", function () { resetSim(); play.textContent = "▶ Прогнать " + SAMPLES.length + " вакансий"; });
+  resetSim();
+
+  // ---------- Карточка ----------
+  var kb = $("#kb"), log = $("#log");
+  var REASONS = [
+    ["role", "Роль или грейд"], ["terms", "Условия или ЗП"], ["ru", "Не RU-компания"],
+    ["company", "Компания неинтересна"], ["other", "Другое"]
+  ];
+  var STAGES = [
+    ["interview", "🎤 Позвали на интервью", "HR Interview"],
+    ["offer", "🎉 Оффер", "Offer"],
+    ["rejected_by_employer", "✖️ Отказ работодателя", "Rejected"]
+  ];
+
+  function btn(text, onClick, cls) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.textContent = text;
+    if (cls) b.className = cls;
+    if (onClick) b.addEventListener("click", onClick);
+    return b;
+  }
+  function row() {
+    var r = document.createElement("div");
+    r.className = "row";
+    for (var i = 0; i < arguments.length; i++) r.appendChild(arguments[i]);
+    return r;
+  }
+  function note(html, first) {
+    if (first) log.innerHTML = "";
+    var d = document.createElement("div");
+    d.innerHTML = html;
+    log.appendChild(d);
+  }
+  var expanded = false, revealed = false, redraw = kbNew;
+  var details = $("#details"), contactLine = $("#contactLine");
+  var linkBtn = function () { return btn("🔗 Открыть", function () { note("Открывается вакансия на hirify.me. Откликаетесь там сами, агент за вас не нажимает."); }); };
+  var detailsBtn = function () {
+    return btn(expanded ? "📋 Свернуть" : "📋 Подробнее", function () {
+      expanded = !expanded;
+      details.hidden = !expanded;
+      note(expanded
+        ? "Сообщение отредактировано на месте: под чертой добавлен блок «📋 Подробно». Лимиты не тратятся, всё уже в базе."
+        : "Блок «Подробно» спрятан, карточка снова короткая.");
+      redraw();
+    });
+  };
+  var contactBtn = function () {
+    if (revealed) {
+      return btn("📇 Откликнуться по контакту", function () { note("Кнопка стала ссылкой: открывается контакт из вакансии, пишете вы сами."); });
+    }
+    return btn("📇 Контакт", function () {
+      revealed = true;
+      contactLine.hidden = false;
+      note("<b>Hirify:</b> контакт раскрыт (<code>POST /vacancies/{id}/reveal</code>, одно раскрытие из 200 в день).<br>" +
+        "В карточку добавлена строка «📇 Контакт», кнопка стала ссылкой. Контакт сохранён в базе: повторное нажатие лимит не тратит. Событие <code>revealed</code>.");
+      redraw();
+    });
+  };
+
+  function kbNew() {
+    redraw = kbNew;
+    kb.innerHTML = "";
+    kb.appendChild(row(linkBtn(), detailsBtn()));
+    kb.appendChild(row(contactBtn()));
+    kb.appendChild(row(
+      btn("✅ Откликнулся", function () {
+        note("<b>Hirify:</b> отклик записан в трекер, этап Applied.<br>Статус в базе: <code>applied</code>, событие <code>applied</code>.", true);
+        kbStatus("✅ Откликнулся", true);
+      }),
+      btn("⏭ Пропустить", function () { note("Бот спрашивает: «Почему пропускаем?»", true); kbReasons(); })
+    ));
+  }
+  function kbReasons() {
+    redraw = kbReasons;
+    kb.innerHTML = "";
+    REASONS.forEach(function (r) {
+      kb.appendChild(row(btn(r[1], function () {
+        var hide = r[0] === "company"
+          ? "<b>Hirify:</b> скрыты все вакансии компании."
+          : "<b>Hirify:</b> вакансия скрыта, больше не появится ни в фильтрах, ни на сайте.";
+        note(hide + "<br>Статус: <code>skipped</code>, причина «" + r[1] + "» попадёт в /stats.");
+        kbStatus("⏭ Пропущено: " + r[1], false);
+      })));
+    });
+    kb.appendChild(row(btn("↩ Назад", function () { note("Кнопки вернулись, ничего не записано."); kbNew(); })));
+  }
+  function kbStatus(label, withStages) {
+    redraw = function () { kbStatus(label, withStages); };
+    kb.innerHTML = "";
+    kb.appendChild(row(btn(label, null, "static")));
+    kb.appendChild(row(linkBtn(), detailsBtn()));
+    kb.appendChild(row(contactBtn()));
+    if (withStages) {
+      STAGES.forEach(function (s) {
+        kb.appendChild(row(btn(s[1], function () {
+          note("<b>Hirify:</b> этап в трекере → " + s[2] + ".<br>Событие <code>" + s[0] + "</code>." +
+            (s[0] === "interview" ? " Кнопки этапов остаются, чтобы потом отметить оффер или отказ." : ""));
+          kbStatus(s[1], s[0] === "interview");
+        })));
+      });
+    }
+  }
+  $("#kbreset").addEventListener("click", function () {
+    log.innerHTML = '<div class="hint">Нажмите кнопку под карточкой</div>';
+    expanded = false; revealed = false;
+    details.hidden = true; contactLine.hidden = true;
+    kbNew();
+  });
+  kbNew();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,507 @@
+<title>Воронка отбора jobagent</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a vertical sorting line. Each stage is a box; what it lets through flows down the left rail, what it drops falls into the chute on the right. */
+:root {
+  --bg: #eef1f4;
+  --surface: #ffffff;
+  --surface-2: #f6f8fa;
+  --ink: #15202b;
+  --muted: #586473;
+  --line: #d5dce3;
+  --pass: #0e6e66;
+  --pass-soft: #d7efec;
+  --drop: #a33a50;
+  --drop-soft: #f6dfe4;
+  --accent: #2f45a6;
+  --accent-soft: #e2e6f7;
+  --warn: #8a5a00;
+  --warn-soft: #f7ecd2;
+  --f-display: "Unbounded", "Arial Black", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #10161d; --surface: #18212b; --surface-2: #1e2935; --ink: #e6ecf2; --muted: #9aa8b7; --line: #2c3a48;
+    --pass: #4cc3b5; --pass-soft: #163a37; --drop: #ef8197; --drop-soft: #45202a; --accent: #9fb0ff; --accent-soft: #232c55;
+    --warn: #e8b54d; --warn-soft: #3d2f12; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #10161d; --surface: #18212b; --surface-2: #1e2935; --ink: #e6ecf2; --muted: #9aa8b7; --line: #2c3a48;
+  --pass: #4cc3b5; --pass-soft: #163a37; --drop: #ef8197; --drop-soft: #45202a; --accent: #9fb0ff; --accent-soft: #232c55;
+  --warn: #e8b54d; --warn-soft: #3d2f12; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 15px; line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 32px 64px;
+}
+.wrap { max-width: 1080px; margin: 0 auto; display: grid; gap: 28px; }
+h1, h2, h3 { text-wrap: balance; margin: 0; }
+h1 { font-family: var(--f-display); font-weight: 700; font-size: clamp(26px, 4.4vw, 40px); line-height: 1.12; letter-spacing: -0.01em; }
+h2 { font-family: var(--f-display); font-weight: 500; font-size: 20px; line-height: 1.25; }
+h3 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+p { margin: 0; max-width: 68ch; }
+code, .mono { font-family: var(--f-mono); font-size: 0.86em; }
+code { background: var(--surface-2); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; overflow-wrap: anywhere; }
+a { color: var(--accent); }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+.num { font-variant-numeric: tabular-nums; }
+
+/* Header */
+header { display: grid; gap: 12px; }
+.eyebrow { font-family: var(--f-mono); font-size: 12px; color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase; }
+.lede { font-size: 17px; color: var(--muted); }
+nav.jump { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+nav.jump a { font-size: 13px; text-decoration: none; color: var(--ink); border: 1px solid var(--line); background: var(--surface); padding: 3px 10px; border-radius: 999px; }
+nav.jump a:hover { border-color: var(--accent); color: var(--accent); }
+
+/* Funnel overview */
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 20px; display: grid; gap: 14px; min-width: 0; }
+.funnel { display: grid; gap: 6px; }
+.frow { display: grid; grid-template-columns: minmax(150px, 220px) 1fr 44px; gap: 12px; align-items: center; }
+.frow .lbl { font-size: 14px; }
+.frow .lbl small { display: block; color: var(--muted); font-size: 12px; }
+.bar { height: 22px; background: var(--surface-2); border-radius: 4px; position: relative; overflow: hidden; }
+.bar > i { position: absolute; inset: 0 auto 0 0; background: var(--pass); border-radius: 4px; }
+.bar > i.alt { background: var(--accent); }
+.frow .n { font-family: var(--f-mono); font-size: 14px; text-align: right; font-variant-numeric: tabular-nums; }
+.legend { font-size: 13px; color: var(--muted); }
+
+/* Stage line */
+.line { display: grid; gap: 0; }
+.stage { display: grid; grid-template-columns: 56px 1fr 260px; gap: 0 18px; position: relative; }
+.rail { position: relative; display: flex; justify-content: center; }
+.rail::before { content: ""; position: absolute; top: 0; bottom: 0; width: 3px; background: var(--pass); opacity: 0.35; }
+.stage:first-child .rail::before { top: 22px; }
+.stage:last-child .rail::before { bottom: auto; height: 22px; }
+.dot { position: relative; z-index: 1; margin-top: 8px; width: 36px; height: 36px; border-radius: 50%; background: var(--surface); border: 2px solid var(--pass); display: grid; place-items: center; font-family: var(--f-mono); font-weight: 500; font-size: 14px; color: var(--pass); }
+.box { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; display: grid; gap: 14px; margin-bottom: 18px; min-width: 0; scroll-margin-top: 16px; }
+.box-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+.tag { font-family: var(--f-mono); font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.tag.cost { border-color: transparent; background: var(--accent-soft); color: var(--accent); }
+.tag.where { background: var(--surface-2); }
+.inflow { font-size: 13px; color: var(--muted); }
+.inflow b { color: var(--pass); font-family: var(--f-mono); font-weight: 500; }
+ul.f { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+ul.f li { display: grid; grid-template-columns: 18px 1fr; gap: 8px; }
+ul.f li::before { content: "▸"; color: var(--accent); font-size: 12px; line-height: 1.9; }
+.why { background: var(--warn-soft); border-radius: 8px; padding: 12px 14px; display: grid; gap: 6px; }
+.why h3 { color: var(--warn); }
+.why p, .why li { font-size: 14px; }
+.why ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+
+/* Drop chute */
+.chute { margin-bottom: 18px; align-self: start; position: relative; border-radius: 10px; background: var(--drop-soft); padding: 14px 16px; display: grid; gap: 8px; }
+.chute::before { content: ""; position: absolute; left: -18px; top: 26px; width: 18px; border-top: 2px dashed var(--drop); opacity: 0.6; }
+.chute .big { font-family: var(--f-display); font-weight: 700; font-size: 30px; line-height: 1; color: var(--drop); font-variant-numeric: tabular-nums; }
+.chute .cap { font-size: 13px; color: var(--ink); }
+.chute .cap small { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; }
+.chute.pass { background: var(--pass-soft); }
+.chute.pass::before { border-color: var(--pass); }
+.chute.pass .big { color: var(--pass); }
+.chute.none { background: var(--surface-2); }
+.chute.none::before { border-color: var(--line); opacity: 1; }
+.chute.none .big { color: var(--muted); font-size: 22px; }
+
+/* Tables */
+.scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; min-width: 720px; }
+th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+th { font-weight: 600; background: var(--surface-2); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+tr:last-child td { border-bottom: 0; }
+td .id { font-family: var(--f-mono); color: var(--muted); font-size: 12px; display: block; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-family: var(--f-mono); font-size: 12px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; }
+.chip.no { background: var(--drop-soft); border-color: transparent; color: var(--drop); }
+.chip.yes { background: var(--pass-soft); border-color: transparent; color: var(--pass); }
+
+/* Criteria grid */
+.crit { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.c { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; display: grid; gap: 6px; align-content: start; background: var(--surface-2); }
+.c b { font-size: 14px; }
+.c p { font-size: 13.5px; }
+.c .because { font-size: 13px; color: var(--warn); }
+.c .because::before { content: "Почему: "; font-weight: 600; }
+
+/* Small charts */
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.mini { display: grid; gap: 6px; }
+.mrow { display: grid; grid-template-columns: 150px 1fr 32px; gap: 10px; align-items: center; font-size: 13px; }
+.mrow .bar { height: 16px; }
+.mrow .bar > i { background: var(--drop); }
+.mrow.ok .bar > i { background: var(--pass); }
+.mrow .n { font-family: var(--f-mono); text-align: right; font-variant-numeric: tabular-nums; }
+.threshold { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.threshold::before, .threshold::after { content: ""; flex: 1; border-top: 1px dashed var(--muted); }
+
+/* Bins + notes */
+.bins { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.bin { border-radius: 10px; padding: 14px 16px; background: var(--surface); border: 1px solid var(--line); display: grid; gap: 6px; align-content: start; }
+.bin b { font-size: 14px; }
+.bin p { font-size: 13.5px; color: var(--muted); }
+.notes { display: grid; gap: 10px; counter-reset: n; }
+.note { display: grid; grid-template-columns: 30px 1fr; gap: 10px; align-items: start; }
+.note::before { counter-increment: n; content: counter(n); font-family: var(--f-mono); font-size: 13px; color: var(--accent); background: var(--accent-soft); border-radius: 6px; text-align: center; line-height: 26px; height: 26px; }
+.note p { font-size: 14.5px; }
+footer { font-size: 12.5px; color: var(--muted); display: grid; gap: 4px; }
+
+@media (max-width: 860px) {
+  .stage { grid-template-columns: 40px 1fr; }
+  .chute { grid-column: 2; margin-top: -8px; }
+  .chute::before { display: none; }
+  .dot { width: 30px; height: 30px; font-size: 12px; }
+}
+@media (max-width: 520px) {
+  .frow { grid-template-columns: 1fr 40px; }
+  .frow .bar { grid-column: 1 / -1; grid-row: 2; }
+  .mrow { grid-template-columns: 110px 1fr 28px; }
+  .box { padding: 14px; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .bar > i { transition: width 0.6s ease; }
+}
+</style>
+
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">jobagent · MVP-1 «отбор» · снимок базы 27.10.2026, 08:15 UTC</div>
+  <h1>Как вакансия проходит путь от Hirify до Telegram</h1>
+  <p class="lede">Восемь ступеней, от бесплатной к самой дорогой. Слева то, что идёт дальше. Справа то, что ступень отсеяла и куда это делось. Цифры взяты из базы агента за первые 20 часов работы, с 26.10 12:51 до 27.10 08:15 UTC.</p>
+  <nav class="jump" aria-label="Ступени">
+    <a href="#hirify">0 · Ленты Hirify</a>
+    <a href="#intake">1 · Приём</a>
+    <a href="#rules">2 · Правила</a>
+    <a href="#haiku">3 · Haiku</a>
+    <a href="#fresh">4 · Полный текст</a>
+    <a href="#linkedin">4а · LinkedIn</a>
+    <a href="#sonnet">5 · Sonnet</a>
+    <a href="#bot">6 · Бот и решение</a>
+    <a href="#bins">Куда уходит отсеянное</a>
+    <a href="#notes">Что видно по данным</a>
+  </nav>
+</header>
+
+<section class="panel" aria-labelledby="funnel-h">
+  <h2 id="funnel-h">Воронка за 20 часов</h2>
+  <div class="funnel">
+    <div class="frow"><div class="lbl">Пришло в агента<small>45 вебхуком, 12 опросом</small></div><div class="bar"><i style="width:100%"></i></div><div class="n">57</div></div>
+    <div class="frow"><div class="lbl">Прошли правила</div><div class="bar"><i style="width:98.2%"></i></div><div class="n">56</div></div>
+    <div class="frow"><div class="lbl">Прошли Haiku</div><div class="bar"><i style="width:96.5%"></i></div><div class="n">55</div></div>
+    <div class="frow"><div class="lbl">Свежие, дошли до Sonnet</div><div class="bar"><i style="width:94.7%"></i></div><div class="n">54</div></div>
+    <div class="frow"><div class="lbl">Оценка 4–5, ушли в бот</div><div class="bar"><i style="width:10.5%"></i></div><div class="n">6</div></div>
+    <div class="frow"><div class="lbl">Вы откликнулись</div><div class="bar"><i class="alt" style="width:7%"></i></div><div class="n">4</div></div>
+  </div>
+  <p class="legend">Длина полосы — доля от 57. Почти весь отсев происходит на последней, самой дорогой ступени: Sonnet отсеял 48 вакансий из 54.</p>
+</section>
+
+<div class="line">
+
+<!-- 0. Hirify -->
+<div class="stage">
+  <div class="rail"><div class="dot">0</div></div>
+  <article class="box" id="hirify">
+    <div class="box-head"><h2>Ленты Hirify</h2><span class="tag cost">бесплатно</span><span class="tag where">hirify.me, фильтры лент</span></div>
+    <p>Первый и самый широкий фильтр. Hirify сам решает, какие вакансии попадут в ленту, и только о них сообщает агенту. Всё, что не прошло фильтры лент, агент не видит вообще. С 27.10 активны 4 ленты, было 6.</p>
+    <div>
+      <h3>Общее для всех четырёх лент</h3>
+      <ul class="f">
+        <li><span><b>Гео (кроме ленты релокации):</b> <code>my_location</code> = Россия, Сербия, Грузия, Армения, Казахстан, Кипр, ОАЭ, Турция, Черногория + <code>worldwide_remote=true</code>. Вакансии без указанной географии остаются.</span></li>
+        <li><span><b>Формат:</b> исключён только офис <code>excluded_work_format=onsite</code>. Гибрид проходит. В ленте релокации фильтра формата нет.</span></li>
+        <li><span><b>Грейд:</b> исключены <code>trainee</code> и <code>junior</code>. Верхней границы нет: Lead, Head, Director и C-level проходят.</span></li>
+        <li><span><b>Домены, зарплата, английский, тип компании:</b> не фильтруются ни в одной ленте.</span></li>
+      </ul>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Лента</th><th>Направление</th><th>Поиск по тексту</th><th>Источник</th><th>Гео и формат</th><th>Грейд исключён</th></tr></thead>
+        <tbody>
+          <tr><td>Product Manager — remote/hybrid (TG)<span class="id">31447</span></td><td><div class="chips"><span class="chip yes">product_management</span><span class="chip yes">ai_engineering</span><span class="chip yes">product_engineer</span></div></td><td>—</td><td>все, кроме hh</td><td>общее гео, без офиса</td><td>trainee, junior</td></tr>
+          <tr><td>Product Manager — relocation (TG)<span class="id">67562</span></td><td><div class="chips"><span class="chip yes">product_management</span><span class="chip yes">ai_engineering</span><span class="chip yes">product_engineer</span></div></td><td>—</td><td>все, кроме hh</td><td>любая релокация, кроме США; офис разрешён</td><td>trainee, junior</td></tr>
+          <tr><td>PMM / Growth — remote/hybrid<span class="id">70780</span></td><td><div class="chips"><span class="chip yes">marketing</span></div></td><td><code>product marketing OR growth</code></td><td>все, кроме hh</td><td>общее гео, без офиса</td><td>trainee, junior</td></tr>
+          <tr><td>Product + Growth + Builder — hh.ru (TG)<span class="id">70781</span></td><td><div class="chips"><span class="chip">любое, кроме</span><span class="chip no">hr_bp</span><span class="chip no">product_design</span><span class="chip no">product_analyst</span><span class="chip no">data_analytics</span></div></td><td>в названии: product, products, продукт и 13 его форм, продакт, продакт-менеджер, CPO, PMM, owner, владелец, builder, growth, growth-маркетолог, рост, роста</td><td>только hh</td><td>общее гео, без офиса</td><td>trainee, junior</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="why">
+      <h3>Почему фильтры такие</h3>
+      <ul>
+        <li><b>Гео по стране кандидата, а не вакансии.</b> Hirify сам вычисляет, какие удалённые вакансии открыты из этих стран. Список шире России, потому что вы готовы переехать.</li>
+        <li><b>Исключения вместо выбора.</b> Выбор значения оставляет только вакансии, где поле заполнено, а исключение сохраняет незаполненные. Отсюда <code>excluded_*</code> для формата и грейда.</li>
+        <li><b>hh.ru отдельной лентой.</b> Hirify прячет hh по умолчанию, его видно только через <code>sources=hh</code>. Добавить hh в общую ленту нельзя: явный список источников теряет вакансии без источника (233 из 1886). С 27.10 две hh-ленты слиты в одну по поиску в названии; поиск ищет слово целиком, поэтому падежи «продукт» перечислены отдельно.</li>
+        <li><b>PMM и Growth отдельно.</b> Hirify размечает такие роли как marketing, в продуктовую ленту они не попадают.</li>
+        <li><b>Отдельной ленты Product Builder больше нет.</b> Из 41 вакансии под ваше гео подходили 2, и обе уже есть в 31447 через ai_engineering и product_engineer. На hh слово builder есть в поиске.</li><li><b>Релокация отдельно.</b> Гео и релокация в Hirify соединяются через «или», но в общей ленте исключён офис, а около 40 вакансий с релокацией офисные: Кипр, Черногория, Казахстан.</li>
+        <li><b>ai_engineering и product_engineer</b> добавлены 27.10: так Hirify размечает AI Product Builder-роли (пример: Paralect). Объём продуктовых лент вырос примерно вдвое.</li>
+      </ul>
+    </div>
+  </article>
+  <aside class="chute none">
+    <div class="big">не видно</div>
+    <div class="cap">Отсеянное фильтрами лент агенту не приходит, сколько его — неизвестно.<small>Для масштаба: в 31447 сейчас около 1880 живых вакансий, во всём Hirify их десятки тысяч.</small></div>
+  </aside>
+</div>
+
+<!-- 1. Intake -->
+<div class="stage">
+  <div class="rail"><div class="dot">1</div></div>
+  <article class="box" id="intake">
+    <div class="box-head"><h2>Приём в очередь</h2><span class="tag cost">бесплатно</span><span class="tag where">ingest.py</span></div>
+    <p class="inflow">На входе: новые вакансии из лент (в замер попали 6 лент, с 27.10 их 4). Пришло <b>57</b>.</p>
+    <ul class="f">
+      <li><span><b>Вебхук (основной путь), 45 вакансий.</b> Hirify присылает карточку новой вакансии. Агент проверяет подпись запроса, отбрасывает повторную доставку и кладёт вакансию в очередь. Если вакансия нашлась в трёх лентах, она обрабатывается один раз, а ленты дописываются к ней.</span></li>
+      <li><span><b>Страховочный опрос, 12 вакансий.</b> Раз в 12 часов агент читает первые 2 страницы по 50 вакансий каждой ленты и добирает пропущенное. Дальше не листает: Hirify считает массовое листание копированием каталога.</span></li>
+      <li><span><b>Первичная разметка, один раз.</b> Всё, что уже лежало в лентах при запуске, помечено как «уже было» и не оценивается.</span></li>
+    </ul>
+  </article>
+  <aside class="chute none">
+    <div class="big num">458</div>
+    <div class="cap">помечены «уже было» при запуске<small>Статус <code>baseline</code>. Не оценивались, чтобы не тратить открытия и вызовы Claude на старые вакансии.</small></div>
+  </aside>
+</div>
+
+<!-- 2. Rules -->
+<div class="stage">
+  <div class="rail"><div class="dot">2</div></div>
+  <article class="box" id="rules">
+    <div class="box-head"><h2>Правила без LLM</h2><span class="tag cost">бесплатно</span><span class="tag where">rules.py · check_card</span></div>
+    <p class="inflow">На входе <b>57</b>. Работают по карточке, вакансию не открывают.</p>
+    <ul class="f">
+      <li><span><b>Уже откликались.</b> <code>has_applied</code> (откликались через Hirify) или <code>in_tracker</code> (вакансия есть в трекере) → отказ, ступень <code>already</code>.</span></li>
+      <li><span><b>Грейд.</b> Отказ, только если <em>все</em> грейды вакансии из набора <code>trainee, intern, junior</code>. Junior + middle проходит, вакансия без грейда тоже.</span></li>
+      <li><span><b>Украинский язык</b> (с 27.10). Отказ, если Hirify разметил вакансию как <code>ua</code> или в тексте много букв і, ї, є, ґ. Проверяется по карточке и по полному тексту.</span></li>
+      <li><span><b>Жёсткий отказ по названию</b> (<code>HARD_REJECT</code>): product design, продуктовый дизайнер, product analyst, продуктовый аналитик, data analyst, data scientist, UX/UI.</span></li>
+      <li><span><b>Стоп-слова в названии</b> (<code>STOP</code>): developer, engineer, designer, analyst, QA, DevOps, recruiter, HR, sales, account manager, support, copywriter, SMM, бухгалтер, юрист и их русские варианты.</span></li>
+      <li><span><b>Слова-исключения</b> (<code>KEEP</code>) отменяют стоп-слова: product, продукт, PO, PM, PMM, growth, рост, marketing, маркетолог, CPO, builder. «AI Product Engineer» проходит, «Backend Engineer» нет.</span></li>
+    </ul>
+    <div class="why">
+      <h3>Почему так</h3>
+      <ul>
+        <li>Ступень бесплатная и предсказуемая, поэтому режет только то, где ошибиться почти невозможно.</li>
+        <li>Грейд проверяется по «все грейды младшие», а не «есть junior»: Hirify часто ставит вакансии сразу несколько грейдов, и senior-роль с пометкой junior терять жалко.</li>
+        <li><code>KEEP</code> сильнее <code>STOP</code>, чтобы не потерять гибридные роли вроде AI Product Engineer или Product Builder.</li>
+      </ul>
+    </div>
+  </article>
+  <aside class="chute">
+    <div class="big num">1</div>
+    <div class="cap">роль не по профилю<small>Senior SF Business Analyst / Consultant Lead (Salesforce). По грейду и «уже откликались» отказов не было.</small></div>
+  </aside>
+</div>
+
+<!-- 3. Haiku -->
+<div class="stage">
+  <div class="rail"><div class="dot">3</div></div>
+  <article class="box" id="haiku">
+    <div class="box-head"><h2>Haiku по карточке</h2><span class="tag cost">доли цента</span><span class="tag where">scoring.py · TRIAGE_SYSTEM</span></div>
+    <p class="inflow">На входе <b>56</b>. Быстрая модель отвечает на один вопрос: есть ли явное несовпадение по роли или направлению.</p>
+    <div class="two">
+      <div>
+        <h3>Что видит модель</h3>
+        <ul class="f">
+          <li><span>Карточку: название, грейды, навыки, направления, формат, тип удалёнки, регионы, города, вилку, язык вакансии, уровень английского, скрыта ли компания.</span></li>
+          <li><span>Короткий портрет кандидата (<code>CANDIDATE_BRIEF</code>): Senior PM, 9+ лет, AI и SaaS, growth, activation, monetization; языки; приоритет формата.</span></li>
+        </ul>
+      </div>
+      <div>
+        <h3>Критерии отсева</h3>
+        <ul class="f">
+          <li><span><b>Целевые роли:</b> PM, Senior PM, Product Owner, Product Lead, Head of Product, Growth PM, Product Builder, соседние growth и PMM.</span></li>
+          <li><span><b>Не подходят:</b> дизайнеры, аналитики, разработчики, QA, продажи, поддержка, HR, junior-роли.</span></li>
+          <li><span><b>Отсеивать только явное.</b> При сомнении пропускать дальше.</span></li>
+        </ul>
+      </div>
+    </div>
+    <div class="why">
+      <h3>Почему эти критерии</h3>
+      <ul>
+        <li>В карточке нет описания и требований, поэтому Haiku может судить только о роли и направлении. Формат, зарплату и требования она не оценивает.</li>
+        <li>Правило «сомнение — дальше» выбрано потому, что потерянная хорошая вакансия стоит дороже, чем 1,5 цента на её оценку Sonnet.</li>
+        <li>Если модель не ответила или отказалась, вакансия тоже идёт дальше.</li>
+      </ul>
+    </div>
+  </article>
+  <aside class="chute">
+    <div class="big num">1</div>
+    <div class="cap">явно не та роль<small>Продуктовый маркетолог / менеджер по ассортименту в Food Retail: Excel, iiko, офис.</small></div>
+  </aside>
+</div>
+
+<!-- 4. Full text + freshness -->
+<div class="stage">
+  <div class="rail"><div class="dot">4</div></div>
+  <article class="box" id="fresh">
+    <div class="box-head"><h2>Полный текст и свежесть</h2><span class="tag cost">1 открытие из 1000 в день</span><span class="tag where">rules.py · check_detail</span></div>
+    <p class="inflow">На входе <b>55</b>. Агент открывает вакансию в Hirify и проверяет ещё два условия.</p>
+    <ul class="f">
+      <li><span><b>Уже откликались</b> — повторная проверка по полному тексту.</span></li>
+      <li><span><b>Возраст.</b> Вакансия, созданная больше <code>MAX_AGE_DAYS = 7</code> дней назад, отсеивается. Дата берётся из <code>created_at</code>.</span></li>
+    </ul>
+    <div class="why">
+      <h3>Почему так</h3>
+      <ul>
+        <li>Ваш критерий: свежая — значит создана не раньше 7 дней назад.</li>
+        <li>Карточки и фильтр <code>period=week</code> смотрят на дату обновления, поэтому старые вакансии всплывают снова. Настоящая дата создания есть только в полном тексте.</li>
+      </ul>
+    </div>
+  </article>
+  <aside class="chute">
+    <div class="big num">1</div>
+    <div class="cap">старше 7 дней<small>Head of Marketing / PMM (AI), создана 09.09.2026.</small></div>
+  </aside>
+</div>
+
+<!-- 4a. LinkedIn -->
+<div class="stage">
+  <div class="rail"><div class="dot">4а</div></div>
+  <article class="box" id="linkedin">
+    <div class="box-head"><h2>LinkedIn-проверка компании</h2><span class="tag cost">3 кредита ScrapeCreators</span><span class="tag where">research.py · с 27.10, включается ключом</span></div>
+    <p class="inflow">На входе <b>54</b>. Ничего не отсеивает: собирает данные для RU-метки и передаёт их Sonnet. Пропускается, если компания скрыта или ключ ScrapeCreators не задан.</p>
+    <ul class="f">
+      <li><span><b>Когда идёт (с 27.10):</b> только вакансия на английском и компания не из России. Русский текст, Россия в регионах или скрытая компания — проверка пропускается. Из 69 вакансий в базе проверка нужна 21.</span></li>
+      <li><span><b>Сотрудники.</b> Google-поиск <code>site:linkedin.com/in "Компания"</code>: до 10 человек с именем, должностью, городом и вузом.</span></li>
+      <li><span><b>Страница компании.</b> Ссылку находит поиск <code>site:linkedin.com/company "Компания"</code>, затем ScrapeCreators отдаёт штаб-квартиру, размер, сайт, отмеченных сотрудников и похожие компании.</span></li>
+    </ul>
+    <div class="why">
+      <h3>Почему так</h3>
+      <ul>
+        <li>В API ScrapeCreators нет метода «сотрудники компании» (проверено 27.10 по OpenAPI): страница компании отдаёт только 1–4 отмеченных человека. Поиск Google по профилям через тот же ScrapeCreators находит людей: для Paralect — CEO Dmitry Schetnikovich и сотрудников из Минска, для Improvado — CEO Daniel Kravtsov и сотрудников с СПбГУ.</li>
+        <li>Профиль человека отдельно не запрашивается: опыт там скрыт звёздочками, вуз часто пустой, а сниппет Google уже даёт должность, город и вуз.</li>
+        <li>Самые сильные сигналы — основатели и руководство, а также поддомены профилей и похожих компаний: by., ru., kz.</li>
+        <li>Если ScrapeCreators не ответил, оценка идёт по одному тексту, вакансия не теряется.</li>
+      </ul>
+    </div>
+  </article>
+  <aside class="chute none">
+    <div class="big">0</div>
+    <div class="cap">не отсеивает<small>Данные сохраняются в базе вместе с вакансией и видны в оценке Sonnet.</small></div>
+  </aside>
+</div>
+
+<!-- 5. Sonnet -->
+<div class="stage">
+  <div class="rail"><div class="dot">5</div></div>
+  <article class="box" id="sonnet">
+    <div class="box-head"><h2>Sonnet ставит оценку 1–5</h2><span class="tag cost">≈ 1,5 цента</span><span class="tag where">scoring.py · SCORING_INSTRUCTIONS</span></div>
+    <p class="inflow">На входе <b>54</b>. Модель читает полный текст и сравнивает его с вашими файлами. В бот уходят только вакансии с оценкой не ниже <code>MIN_SCORE = 4</code>.</p>
+    <div>
+      <h3>Что получает модель</h3>
+      <div class="chips" style="margin-top:6px">
+        <span class="chip">полный текст вакансии</span>
+        <span class="chip">ленты, где она нашлась</span>
+        <span class="chip">CANDIDATE_BRIEF</span>
+        <span class="chip">search_criteria.md</span>
+        <span class="chip">experience/Bachinin_Alexander_Experience.md</span>
+        <span class="chip">linkedin_research</span>
+        <span class="chip">applied_examples.md</span>
+      </div>
+    </div>
+    <div>
+      <h3>Пять критериев и почему именно они</h3>
+      <div class="crit" style="margin-top:8px">
+        <div class="c"><b>1. Обязательные требования против резюме</b><p>Каждое must-have сверяется с файлом опыта: один файл, собранный из 65 вариантов резюме, с разделом «Не засчитывать». Отсутствие — серьёзный минус. Опыт, которого нет в резюме, модель не додумывает.</p><p class="because">рекрутер отсекает по жёстким требованиям первым делом, а придуманный опыт дал бы ложные 4/5.</p></div>
+        <div class="c"><b>2. Направление</b><p>Роль и домен против целевых ролей из критериев. С 27.10 подходят грейды от middle до C-level, минус только trainee, intern, junior.</p><p class="because">вы рассматриваете не только senior. До правки модель отклонила 14 вакансий как недогрейд или перегрейд.</p></div>
+        <div class="c"><b>3. Условия</b><p>Зарплата, гео, формат, релокация, тип занятости, язык работы. Цифра без валюты или периода считается вопросом, а не фактом.</p><p class="because">формат у вас главный приоритет: удалёнка из России → удалёнка из другой страны → офис только с релокацией.</p></div>
+        <div class="c"><b>4. Стоп-факторы</b><p>Офис или гибрид без релокации; trainee, intern, junior; из России нельзя и переезда нет; вакансия на украинском (её отсекают уже правила, шаг 2). Одно попадание — вето.</p><p class="because">это ваши жёсткие условия, торговаться с ними бессмысленно.</p></div>
+        <div class="c"><b>5. Сигналы мошенничества</b><p>Размытые обязанности; нет ни компании, ни зарплаты; просьбы об оплате.</p><p class="because">методика Hirify для агентов и защита от фейковых вакансий.</p></div>
+        <div class="c"><b>RU-метка (не влияет на оценку)</b><p>✅ русскоязычные основатели или руководство видны в тексте или LinkedIn · 🟡 косвенные сигналы · ❓ компания скрыта · ❌ иностранная команда. С 27.10 ставится по тексту и по данным LinkedIn из шага 4а.</p><p class="because">ваше важное условие. Решение по метке пока за вами.</p></div>
+      </div>
+    </div>
+    <div class="why">
+      <h3>Почему порог 4 и зачем примеры</h3>
+      <ul>
+        <li>Шкала: 5 — откликаться в первую очередь, 4 — стоит откликнуться, 3 — на грани. Методика Hirify советует откликаться от 4.</li>
+        <li><code>applied_examples.md</code> — вакансии, на которые вы откликались. Сходство с ними считается доводом «за», но не заменяет оценку по пунктам.</li>
+        <li>«Неизвестно» не равно «нет»: о чём текст молчит, то становится вопросом работодателю, а не минусом.</li>
+      </ul>
+    </div>
+    <div class="two">
+      <div class="mini" role="img" aria-label="Распределение оценок: 1 — 6, 2 — 26, 3 — 16, 4 — 5, 5 — 1">
+        <h3>Какие оценки ставит (54)</h3>
+        <div class="mrow ok"><span>5 · в первую очередь</span><div class="bar"><i style="width:3.8%"></i></div><span class="n">1</span></div>
+        <div class="mrow ok"><span>4 · стоит откликнуться</span><div class="bar"><i style="width:19.2%"></i></div><span class="n">5</span></div>
+        <div class="threshold">порог MIN_SCORE = 4</div>
+        <div class="mrow"><span>3 · на грани</span><div class="bar"><i style="width:61.5%"></i></div><span class="n">16</span></div>
+        <div class="mrow"><span>2 · скорее нет</span><div class="bar"><i style="width:100%"></i></div><span class="n">26</span></div>
+        <div class="mrow"><span>1 · нет</span><div class="bar"><i style="width:23.1%"></i></div><span class="n">6</span></div>
+      </div>
+      <div class="mini" role="img" aria-label="Главная причина отказа: требования и домен 15, формат 14, уровень выше 9, роль или уровень ниже 5, иностранная или условия неясны 5">
+        <h3>Главная причина отказа (48)</h3>
+        <div class="mrow"><span>нет обязательного опыта, чужой домен</span><div class="bar"><i style="width:100%"></i></div><span class="n">15</span></div>
+        <div class="mrow"><span>офис или гибрид без релокации</span><div class="bar"><i style="width:93.3%"></i></div><span class="n">14</span></div>
+        <div class="mrow"><span>уровень выше: Director, C-level, Staff</span><div class="bar"><i style="width:60%"></i></div><span class="n">9</span></div>
+        <div class="mrow"><span>роль или уровень ниже: middle, исполнитель</span><div class="bar"><i style="width:33.3%"></i></div><span class="n">5</span></div>
+        <div class="mrow"><span>иностранная команда, условия неясны</span><div class="bar"><i style="width:33.3%"></i></div><span class="n">5</span></div>
+        <p class="legend">Разметка ручная, по первому доводу в вердикте модели, поэтому приблизительная.</p>
+      </div>
+    </div>
+  </article>
+  <aside class="chute">
+    <div class="big num">48</div>
+    <div class="cap">оценка 1–3<small>Сохраняются в базе с оценкой и вердиктом. Примеры: Product Manager (iGaming) 2/5 — нет 3+ лет в iGaming; Product Lead в Омске 2/5 — офис без релокации.</small></div>
+  </aside>
+</div>
+
+<!-- 6. Bot -->
+<div class="stage">
+  <div class="rail"><div class="dot">6</div></div>
+  <article class="box" id="bot">
+    <div class="box-head"><h2>Карточка в Telegram и ваше решение</h2><span class="tag cost">бесплатно</span><span class="tag where">@alexsearchjob_bot · cards.py, bot.py</span></div>
+    <p class="inflow">В бот пришло <b>6</b>: пять вакансий на 4/5 и одна на 5/5.</p>
+    <ul class="f">
+      <li><span><b>Карточка (с 27.10 короткая):</b> оценка и роль; компания и RU-метка с сигналами из текста; строка <b>🔎 LinkedIn</b> с тем, что нашла проверка; формат, вилка, грейд, давность; вердикт; два довода «за» как «требование → факт», один «против»; вопросы работодателю.</span></li>
+      <li><span><b>📋 Подробнее</b> раскрывает на месте: требования с ✓/✗, полное RU-обоснование, ту же строку LinkedIn и до 6 найденных сотрудников со ссылками, тревожные сигналы, канал отклика и ленту.</span></li>
+      <li><span><b>📇 Контакт</b> (с 27.10) — раскрывает в Hirify, как откликнуться: ссылку, Telegram или email. Тратит одно раскрытие из 200 в день, только по вашему нажатию. После раскрытия кнопка ведёт прямо на ссылку отклика.</span></li>
+      <li><span><b>✅ Откликнулся</b> — запись в трекер Hirify (Applied), дальше кнопки этапов: интервью, оффер, отказ.</span></li>
+      <li><span><b>⏭ Пропустить</b> — агент спрашивает причину (роль или грейд, условия или ЗП, не RU-компания, компания неинтересна, другое) и скрывает вакансию в Hirify. «Компания неинтересна» скрывает все её вакансии.</span></li>
+      <li><span>Откликаетесь вы сами. Агент не жмёт «Откликнуться» и раскрывает контакт только по кнопке.</span></li>
+    </ul>
+    <div class="chips">
+      <span class="chip yes">4 откликнулся</span>
+      <span class="chip no">1 из них отказ работодателя (Paralect)</span>
+      <span class="chip">1 пропущен: не RU-компания</span>
+      <span class="chip">1 ждёт решения</span>
+    </div>
+  </article>
+  <aside class="chute pass">
+    <div class="big num">4</div>
+    <div class="cap">отклика из 6 показанных<small>Две трети показанного превратилось в отклик. Ложных срабатываний почти нет.</small></div>
+  </aside>
+</div>
+
+</div>
+
+<section class="panel" id="bins" aria-labelledby="bins-h">
+  <h2 id="bins-h">Куда уходит то, что не попало в бот</h2>
+  <div class="bins">
+    <div class="bin"><b>Отсечено фильтрами лент</b><p>Остаётся в Hirify. Агент о таких вакансиях не знает, в базе их нет. Менять — в фильтрах лент на hirify.me, действует сразу.</p></div>
+    <div class="bin"><b>«Уже было», 458</b><p>В базе со статусом <code>baseline</code>. Не оценивались. Это разовая разметка при запуске.</p></div>
+    <div class="bin"><b>Отказ агента, 51</b><p>В базе со статусом <code>rejected</code>, ступенью (<code>already</code>, <code>rules</code>, <code>triage</code>, <code>stale</code>, <code>score</code>) и причиной. У отказов Sonnet хранятся оценка и полный вывод модели. В Hirify они не скрываются.</p></div>
+    <div class="bin"><b>Пропущено вами, 1</b><p>Статус <code>skipped</code> с причиной. Вакансия скрыта в Hirify и больше не появится ни в лентах, ни на сайте.</p></div>
+  </div>
+</section>
+
+<section class="panel" id="notes" aria-labelledby="notes-h">
+  <h2 id="notes-h">Что видно по первым данным</h2>
+  <div class="notes">
+    <div class="note"><p><b>Дешёвые ступени почти не работают.</b> Правила, Haiku и проверка свежести вместе отсеяли 3 вакансии из 57. До Sonnet дошли 54, то есть 95%, хотя 89% из них он отклонил.</p></div>
+    <div class="note"><p><b>Формат — самая частая причина, которую можно ловить раньше.</b> 14 отказов Sonnet — офис или гибрид без релокации. Ленты исключают только офис, гибрид проходит. Это кандидат на правило или на вопрос для Haiku.</p></div>
+    <div class="note"><p><b>Уровень резался в обе стороны.</b> 9 вакансий были отклонены как слишком высокие (Director, C-level, Staff), 5 — как слишком низкие. С 27.10 грейды от middle до C-level считаются подходящими, теперь такие вакансии отсекаются только за отсутствие нужного опыта.</p></div>
+    <div class="note"><p><b>Новые инженерные специализации будут попадать на стоп-слова.</b> После 27.10 в продуктовые ленты пойдут AI Engineer и LLM Engineer. Правило <code>STOP</code> отсечёт их бесплатно, если в названии нет слов из <code>KEEP</code>, поэтому счётчик ступени «правила» вырастет.</p></div>
+    <div class="note"><p><b>RU-метка не снижает оценку.</b> До LinkedIn-проверки из 54 оценённых 13 получили ❌. Единственный пропуск в боте был по причине «не RU-компания».</p></div>
+    <div class="note"><p><b>Выборка маленькая.</b> 20 часов и 57 вакансий. Пропорции станут надёжнее через неделю работы.</p></div>
+  </div>
+</section>
+
+<footer>
+  <span>Источники: база <code>/opt/jobagent/data/jobagent.sqlite3</code> на сервере, снимок 27.10.2026 08:15 UTC; код <code>agent/jobagent/</code> (rules.py, scoring.py, pipeline.py, config.py, cards.py); фильтры лент через Hirify API на 27.10.2026.</span>
+  <span>Настройки: MIN_SCORE 4, MAX_AGE_DAYS 7, Haiku claude-haiku-5-5, Sonnet claude-sonnet-5-5 (effort medium), опрос раз в 12 ч по 2 страницы.</span>
+</footer>
+
+</div>
