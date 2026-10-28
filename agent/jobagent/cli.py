@@ -1,9 +1,12 @@
-"""Служебные команды: настройка вебхука в Hirify и пробная оценка вакансии.
+"""Служебные команды: настройка вебхука в Hirify, пробная оценка вакансии, проверка промптов.
 
   uv run python -m jobagent.cli feeds
   uv run python -m jobagent.cli setup-webhook https://<ваш-домен>/hirify/webhook
   uv run python -m jobagent.cli test-webhook <webhook_id>
   uv run python -m jobagent.cli dry-run <vacancy_id> [--file vacancy.json]
+  uv run python -m jobagent.cli eval prefilter|triage [--compare было.json]
+  uv run python -m jobagent.cli eval scoring --limit 10 [--compare было.json]
+  uv run python -m jobagent.cli eval prefilter --compare было.json стало.json
 """
 
 from __future__ import annotations
@@ -16,7 +19,9 @@ from html import unescape
 from pathlib import Path
 from typing import Any
 
-from . import rules
+import anthropic
+
+from . import evals, rules
 from .cards import render_full
 from .config import Settings
 from .hirify import HirifyClient
@@ -138,7 +143,27 @@ async def cmd_dry_run(s: Settings, vacancy_id: int, file: Path | None) -> None:
     print("\n" + json.dumps(assessment.model_dump(), ensure_ascii=False, indent=1))
 
 
-def main() -> None:
+async def cmd_eval(s: Settings, args: argparse.Namespace) -> None:
+    """Прогон шага по снимку базы или сравнение двух сохранённых прогонов. В рабочую базу не пишет."""
+    compare = [evals.load_run(p) for p in args.compare or []]
+    if len(compare) == 2:
+        print(evals.render_compare(*compare))
+        return
+    if not args.db.exists():
+        raise SystemExit(f"Нет снимка базы {args.db}. Как его снять — agent/README.md, «Проверка промптов».")
+    # SDK сам повторяет запросы при 429, 5xx и обрывах связи; на прогон из сотни вакансий берём запас.
+    client = anthropic.AsyncAnthropic(max_retries=6)
+    scorer = Scorer(s.knowledge_dir, s.triage_model, s.scoring_model, s.scoring_effort, client=client)
+    only = {i["slug"] for i in compare[0]["items"]} if compare and args.step == "scoring" else None
+    run = await evals.run_eval(
+        args.step, args.db, scorer, evals.EVALS_DIR, args.limit, args.concurrency, s.min_score, only
+    )
+    print(evals.render_report(run))
+    if compare:
+        print("\n" + evals.render_compare(compare[0], run))
+
+
+def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="jobagent.cli")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("feeds", help="список фильтров Hirify")
@@ -151,7 +176,24 @@ def main() -> None:
     dr = sub.add_parser("dry-run", help="оценить одну вакансию без записи в базу")
     dr.add_argument("vacancy_id", type=int)
     dr.add_argument("--file", type=Path, help="JSON полной вакансии вместо запроса к Hirify")
-    args = p.parse_args()
+    ev = sub.add_parser("eval", help="проверить промпт шага на снимке базы")
+    ev.add_argument("step", choices=evals.STEPS)
+    ev.add_argument("--limit", type=int, help=f"сколько вакансий (для scoring обязательно, до {evals.MAX_SCORING_LIMIT})")
+    ev.add_argument(
+        "--compare", type=Path, nargs="+", metavar="FILE",
+        help="сравнить с прошлым прогоном; с двумя файлами — только сравнить, без прогона",
+    )
+    ev.add_argument("--db", type=Path, default=evals.SNAPSHOT_PATH, help="снимок базы")
+    ev.add_argument("--concurrency", type=int, default=evals.CONCURRENCY, help="запросов одновременно")
+    args = p.parse_args(argv)
+    if args.cmd == "eval":
+        if args.compare and len(args.compare) > 2:
+            ev.error("--compare принимает один или два файла")
+        runs_model = not (args.compare and len(args.compare) == 2)
+        if args.step == "scoring" and runs_model and not args.limit:
+            ev.error(f"для scoring нужен --limit от 1 до {evals.MAX_SCORING_LIMIT}: около 2 центов за вакансию")
+        if args.step == "scoring" and args.limit and not 1 <= args.limit <= evals.MAX_SCORING_LIMIT:
+            ev.error(f"--limit для scoring: от 1 до {evals.MAX_SCORING_LIMIT}")
 
     s = Settings.from_env()
     if args.cmd == "feeds":
@@ -168,6 +210,8 @@ def main() -> None:
         if not args.file:
             s.require("hirify_api_key")
         asyncio.run(cmd_dry_run(s, args.vacancy_id, args.file))
+    elif args.cmd == "eval":
+        asyncio.run(cmd_eval(s, args))
 
 
 if __name__ == "__main__":
