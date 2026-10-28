@@ -105,7 +105,13 @@ def test_vocabulary_has_tools_without_generic_terms():
     fb = parse_facts(EXPERIENCE)
     assert {"metabase", "ga4", "higgsfield", "chatfuel", "claude"} <= fb.vocabulary
     assert not {t.lower() for t in GENERIC_TERMS} & fb.vocabulary
-    assert "cpo" in fb.vocabulary  # слово в файле есть, запрет CPO проверяет заголовок, а не словарь
+
+
+def test_vocabulary_only_from_marked_facts():
+    vocab = parse_facts(EXPERIENCE).vocabulary
+    # ml, kyb, cpo встречаются только во вступлении или в «Не засчитывать»: опытом они не считаются.
+    assert not {"ml", "kyb", "cpo"} & vocab
+    assert {"metabase", "ga4"} <= vocab
 
 
 @pytest.mark.parametrize("text,expected", [

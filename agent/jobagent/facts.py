@@ -243,7 +243,6 @@ def _marked_section(heading: str, lines: list[str], facts: dict[str, Fact]) -> s
 
 def parse_facts(path: Path) -> FactBase:
     text = path.read_text(encoding="utf-8")
-    vocabulary = build_vocabulary(text)
     raw: dict[str, Fact] = {}
     employers: dict[str, Employer] = {}
     not_counted: tuple[str, ...] = ()
@@ -264,6 +263,13 @@ def parse_facts(path: Path) -> FactBase:
                     raise FactFileError(f"Код {code} у двух мест работы: «{employers[code].heading}» и «{place}»")
                 employers[code] = Employer(code, place, parse_titles(raw[context].text if context else ""), context)
 
+    headlines = _headlines(raw, not_counted)
+    # Словарь только из текста пронумерованных фактов: вступление, «Перерыв» и «Не засчитывать»
+    # в него не входят, иначе выдуманное название прошло бы проверку. Пункт с позиционированиями
+    # даёт только разрешённые заголовки (CPO из него в словарь не попадает).
+    vocabulary = build_vocabulary(
+        "\n".join(", ".join(headlines) if f.text.startswith(HEADLINES_PREFIX) else f.text for f in raw.values())
+    )
     facts = {
         fid: Fact(fid, f.employer, f.text, extract_numbers(f.text), extract_terms(f.text, vocabulary))
         for fid, f in raw.items()
@@ -271,7 +277,7 @@ def parse_facts(path: Path) -> FactBase:
     return FactBase(
         facts=facts,
         employers=employers,
-        headlines=_headlines(facts, not_counted),
+        headlines=headlines,
         vocabulary=vocabulary,
         not_counted=not_counted,
     )
