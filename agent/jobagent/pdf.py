@@ -27,7 +27,14 @@ from jobagent.package_rules import CUT_ORDER, EMPLOYER_NAMES, EMPLOYER_NAMES_EN,
 
 
 class PackageError(RuntimeError):
-    """Пакет отклика нельзя собрать (резюме не помещается, нет данных и т. п.)."""
+    """Пакет отклика нельзя собрать (резюме не помещается, нет данных и т. п.).
+
+    usages — затраты LLM-вызовов до сбоя, (шаг, Usage); заполняет PackageBuilder.build.
+    """
+
+    def __init__(self, *args: object) -> None:
+        super().__init__(*args)
+        self.usages: list = []
 
 
 @dataclass(frozen=True)

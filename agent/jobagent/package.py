@@ -429,12 +429,23 @@ class PackageBuilder:
     async def build(
         self, v: Vacancy, feedback: str | None = None, previous: BuiltPackage | None = None
     ) -> tuple[BuiltPackage, list[tuple[str, Usage]]]:
+        """Собирает пакет. При PackageError затраты уже сделанных вызовов лежат в err.usages."""
+        usage: list[tuple[str, Usage]] = []
+        try:
+            return await self._build(v, feedback, previous, usage), usage
+        except PackageError as err:
+            err.usages = list(usage)
+            raise
+
+    async def _build(
+        self, v: Vacancy, feedback: str | None, previous: BuiltPackage | None, usage: list[tuple[str, Usage]]
+    ) -> BuiltPackage:
+        """Сборка; затраты каждого вызова дописываются в usage сразу после ответа."""
         if not v.detail:
             raise PackageError("у вакансии нет полного текста")
         lang = vacancy_language(v.detail)
         company = _company(v)
         vacancy = "<vacancy>\n" + vacancy_for_prompt(v.detail, v.feeds) + "\n</vacancy>"
-        usage: list[tuple[str, Usage]] = []
         warnings: list[str] = []
 
         if previous is not None:
@@ -468,7 +479,7 @@ class PackageBuilder:
             violations, u = await self._check(ctx, resume, letter, warnings)
             usage.append(("package_check", u))
 
-        resume, letter, removed, left = self._apply(resume, letter, violations)
+        resume, letter, removed, left = self._apply(resume, letter, violations, req_map.role_type)
         warnings += left
 
         contacts = replace(self.contacts, location_line=LOCATION_LINE[lang])
@@ -477,7 +488,7 @@ class PackageBuilder:
             "пакет %s: убрано %d, предупреждений %d, подгонка %s",
             v.slug, len(removed), len(warnings), ", ".join(cut_steps) or "нет",
         )
-        package = BuiltPackage(
+        return BuiltPackage(
             lang=lang,
             role_type=req_map.role_type,
             req_map=req_map,
@@ -490,10 +501,9 @@ class PackageBuilder:
             warnings=warnings,
             cut_steps=cut_steps,
         )
-        return package, usage
 
     def _apply(
-        self, resume: ResumeDraft, letter: LetterDraft, violations: list[Violation]
+        self, resume: ResumeDraft, letter: LetterDraft, violations: list[Violation], role_type: RoleType
     ) -> tuple[ResumeDraft, LetterDraft, list[Violation], list[str]]:
         """Нарушения после пересборки по таблице ON_VIOLATION: удалить, заменить тире, предупредить или упасть."""
         fail = sorted({f"{x.code} ({x.path})" for x in violations if ON_VIOLATION[x.code] == "fail"})
@@ -522,6 +532,12 @@ class PackageBuilder:
             if f"jobs[{i}].title" in titles and employer is not None and employer.titles:
                 title = employer.titles[0]
             bullets = [b for j, b in enumerate(job.bullets) if f"jobs[{i}].bullets[{j}]" not in gone]
+            if not bullets:
+                # Место работы без пунктов в PDF не идёт: необязательное убирается, без обязательного пакета нет.
+                if job.employer in REQUIRED[role_type]:
+                    raise PackageError(f"после пересборки: composition (jobs[{i}] {job.employer}: нет пунктов)")
+                warnings.append(f"⚠️ проверь: убрал место работы {job.employer}, не осталось пунктов")
+                continue
             jobs.append(job.model_copy(update={"title": title, "bullets": bullets}))
         resume = resume.model_copy(update={
             "summary": [c for i, c in enumerate(resume.summary) if f"summary[{i}]" not in gone],

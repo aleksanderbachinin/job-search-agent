@@ -149,9 +149,18 @@ KUBERNETES = "Deployed the platform services on Kubernetes."
 INVENTED = "Sign-up experiments raised registration conversion by 35%."
 
 
-def resume(extra: dict[str, list[dict]] | None = None, drop: tuple[str, ...] = (), titles: dict | None = None) -> dict:
-    """Чистый черновик builder-резюме (проходит проверку кодом); extra добавляет пункты месту работы."""
+def resume(
+    extra: dict[str, list[dict]] | None = None,
+    drop: tuple[str, ...] = (),
+    titles: dict | None = None,
+    only: dict[str, list[dict]] | None = None,
+) -> dict:
+    """Чистый черновик builder-резюме (проходит проверку кодом).
+
+    extra добавляет пункты месту работы, only заменяет все его пункты.
+    """
     extra = extra or {}
+    only = only or {}
     titles = {**TITLES, **(titles or {})}
     return {
         "headline": "AI PM / AI Product Builder",
@@ -160,7 +169,7 @@ def resume(extra: dict[str, list[dict]] | None = None, drop: tuple[str, ...] = (
             {
                 "employer": code,
                 "title": titles[code],
-                "bullets": [claim(b.text, *b.facts) for b in bullets] + extra.get(code, []),
+                "bullets": only.get(code, [claim(b.text, *b.facts) for b in bullets] + extra.get(code, [])),
             }
             for code, bullets in JOB_BULLETS.items()
             if code not in drop
@@ -379,6 +388,48 @@ async def test_composition_error_after_retry_raises(fb_dir):
         await builder(client, fb_dir).build(vacancy())
     assert "composition" in str(err.value)
     assert len(captured) == 6
+
+
+async def test_package_error_carries_usages(fb_dir):
+    captured: list = []
+    no_vibe = resume(drop=("VIBE",))
+    client = queue_client(captured, [
+        (MAP, MAP_MODEL), (no_vibe, GEN_MODEL), (letter(), GEN_MODEL), (CHECK_OK, CHECK_MODEL),
+        (no_vibe, GEN_MODEL), (CHECK_OK, CHECK_MODEL),
+    ])
+    with pytest.raises(PackageError) as err:
+        await builder(client, fb_dir).build(vacancy())
+    assert [step for step, _ in err.value.usages] == [
+        "package_map", "package_resume", "package_letter", "package_check", "package_resume", "package_check",
+    ]
+    assert [u.model for _, u in err.value.usages][:2] == [MAP_MODEL, GEN_MODEL]
+    assert PackageError("x").usages == []
+
+
+async def test_optional_job_without_bullets_is_dropped(fb_dir):
+    captured: list = []
+    bad = resume(only={"SKK": [claim("Led a cross-functional team on 12 projects.", "SKK-1")]})
+    client = queue_client(captured, [
+        (MAP, MAP_MODEL), (bad, GEN_MODEL), (letter(), GEN_MODEL), (CHECK_OK, CHECK_MODEL),
+        (bad, GEN_MODEL), (CHECK_OK, CHECK_MODEL),
+    ])
+    pkg, _ = await builder(client, fb_dir).build(vacancy())
+    assert [j.employer for j in pkg.resume.jobs] == ["VIBE", "GPTS", "MPS", "STR", "AEZ"]
+    assert pkg.removed[0].code == "number" and pkg.removed[0].path == "jobs[3].bullets[0]"
+    assert any(w.startswith("⚠️ проверь") and "SKK" in w for w in pkg.warnings)
+
+
+async def test_required_job_without_bullets_raises(fb_dir):
+    captured: list = []
+    bad = resume(only={"AEZ": [claim("Built the product from zero to $25K MRR.", "AEZ-1")]})
+    client = queue_client(captured, [
+        (MAP, MAP_MODEL), (bad, GEN_MODEL), (letter(), GEN_MODEL), (CHECK_OK, CHECK_MODEL),
+        (bad, GEN_MODEL), (CHECK_OK, CHECK_MODEL),
+    ])
+    with pytest.raises(PackageError) as err:
+        await builder(client, fb_dir).build(vacancy())
+    assert "composition" in str(err.value) and "AEZ" in str(err.value)
+    assert len(err.value.usages) == 6
 
 
 async def test_wrong_title_after_retry_becomes_canonical(fb_dir):
