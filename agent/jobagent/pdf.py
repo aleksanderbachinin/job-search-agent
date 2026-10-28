@@ -29,11 +29,13 @@ from jobagent.package_rules import CUT_ORDER, EMPLOYER_NAMES, EMPLOYER_NAMES_EN,
 class PackageError(RuntimeError):
     """Пакет отклика нельзя собрать (резюме не помещается, нет данных и т. п.).
 
+    code — короткий код причины для события и сообщения в боте (текст исключения туда не идёт);
     usages — затраты LLM-вызовов до сбоя, (шаг, Usage); заполняет PackageBuilder.build.
     """
 
-    def __init__(self, *args: object) -> None:
+    def __init__(self, *args: object, code: str = "package_error") -> None:
         super().__init__(*args)
+        self.code = code
         self.usages: list = []
 
 
@@ -131,7 +133,7 @@ def job_dates(code: str, fb: FactBase, lang: Lang) -> str:
     """Даты места работы из заголовка файла опыта: «Jan 2024 – Aug 2025»."""
     employer = fb.employers.get(code)
     if employer is None:
-        raise PackageError(f"нет места работы {code} в файле опыта")
+        raise PackageError(f"нет места работы {code} в файле опыта", code="unknown_employer")
     dates = employer.heading.rsplit(" · ", 1)[-1]
     dates = re.sub(r"\s*\(.*?\)", "", dates).strip()
     if dates.endswith("наст. время"):
@@ -293,7 +295,7 @@ def fit_one_page(
                 draft, steps = cut, steps + [step]
                 pdf, pages = render_pdf(draft, fb, contacts, lang)
     if pages > 1:
-        raise PackageError("не помещается на страницу")
+        raise PackageError("не помещается на страницу", code="does_not_fit")
     return draft, pdf, steps
 
 

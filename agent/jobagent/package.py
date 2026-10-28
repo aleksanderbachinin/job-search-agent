@@ -358,7 +358,7 @@ class PackageBuilder:
     ):
         parsed, stop_reason, usage = await self._call(model, system, content, output_format, max_tokens)
         if parsed is None:
-            err = PackageError(f"{what}: нет структурированного ответа (stop_reason={stop_reason})")
+            err = PackageError(f"{what}: нет структурированного ответа (stop_reason={stop_reason})", code="no_answer")
             err.usages = [(step, usage)]
             raise err
         return parsed, usage
@@ -464,7 +464,7 @@ class PackageBuilder:
     ) -> BuiltPackage:
         """Сборка; затраты каждого вызова дописываются в usage сразу после ответа."""
         if not v.detail:
-            raise PackageError("у вакансии нет полного текста")
+            raise PackageError("у вакансии нет полного текста", code="no_detail")
         lang = vacancy_language(v.detail)
         company = _company(v)
         vacancy = "<vacancy>\n" + vacancy_for_prompt(v.detail, v.feeds) + "\n</vacancy>"
@@ -528,9 +528,11 @@ class PackageBuilder:
         self, resume: ResumeDraft, letter: LetterDraft, violations: list[Violation], role_type: RoleType
     ) -> tuple[ResumeDraft, LetterDraft, list[Violation], list[str]]:
         """Нарушения после пересборки по таблице ON_VIOLATION: удалить, заменить тире, предупредить или упасть."""
-        fail = sorted({f"{x.code} ({x.path})" for x in violations if ON_VIOLATION[x.code] == "fail"})
-        if fail:
-            raise PackageError("после пересборки: " + ", ".join(fail))
+        failed = [x for x in violations if ON_VIOLATION[x.code] == "fail"]
+        if failed:
+            fail = sorted({f"{x.code} ({x.path})" for x in failed})
+            code = "+".join(sorted({x.code for x in failed}))  # composition, headline, language
+            raise PackageError("после пересборки: " + ", ".join(fail), code=code)
 
         gone: dict[str, Violation] = {}
         for x in violations:
@@ -557,7 +559,9 @@ class PackageBuilder:
             if not bullets:
                 # Место работы без пунктов в PDF не идёт: необязательное убирается, без обязательного пакета нет.
                 if job.employer in REQUIRED[role_type]:
-                    raise PackageError(f"после пересборки: composition (jobs[{i}] {job.employer}: нет пунктов)")
+                    raise PackageError(
+                        f"после пересборки: composition (jobs[{i}] {job.employer}: нет пунктов)", code="composition"
+                    )
                 warnings.append(f"⚠️ проверь: убрал место работы {job.employer}, не осталось пунктов")
                 continue
             jobs.append(job.model_copy(update={"title": title, "bullets": bullets}))

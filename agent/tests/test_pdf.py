@@ -210,8 +210,9 @@ def test_impossible_resume_raises(fb):
         ],
         skills=SKILLS,
     )
-    with pytest.raises(PackageError, match="не помещается на страницу"):
+    with pytest.raises(PackageError, match="не помещается на страницу") as err:
         fit_one_page(huge, fb, CONTACTS, "en", "builder")
+    assert err.value.code == "does_not_fit"
 
 
 def test_sidekick_is_dropped_last_and_required_employers_stay(fb):

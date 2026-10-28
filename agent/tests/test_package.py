@@ -394,6 +394,7 @@ async def test_composition_error_after_retry_raises(fb_dir):
     with pytest.raises(PackageError) as err:
         await builder(client, fb_dir).build(vacancy())
     assert "composition" in str(err.value)
+    assert err.value.code == "composition"
     assert len(captured) == 6
 
 
@@ -411,6 +412,7 @@ async def test_package_error_carries_usages(fb_dir):
     ]
     assert [u.model for _, u in err.value.usages][:2] == [MAP_MODEL, GEN_MODEL]
     assert PackageError("x").usages == []
+    assert PackageError("x").code == "package_error"
 
 
 async def test_truncated_answer_keeps_usage_of_failed_call(fb_dir):
@@ -420,6 +422,7 @@ async def test_truncated_answer_keeps_usage_of_failed_call(fb_dir):
     with pytest.raises(PackageError) as err:
         await builder(client, fb_dir).build(vacancy())
     assert "max_tokens" in str(err.value)
+    assert err.value.code == "no_answer"
     assert [(step, u.model) for step, u in err.value.usages] == [
         ("package_map", MAP_MODEL), ("package_resume", GEN_MODEL),
     ]
@@ -448,6 +451,7 @@ async def test_required_job_without_bullets_raises(fb_dir):
     with pytest.raises(PackageError) as err:
         await builder(client, fb_dir).build(vacancy())
     assert "composition" in str(err.value) and "AEZ" in str(err.value)
+    assert err.value.code == "composition"
     assert len(err.value.usages) == 6
 
 
@@ -482,3 +486,13 @@ def test_render_letter_russian_signature():
         "С уважением,\nАлександр Бачинин\n"
         "alexander@example.com | https://www.linkedin.com/in/example/ | https://t.me/example"
     )
+
+
+async def test_vacancy_without_detail_raises_no_detail(fb_dir):
+    captured: list = []
+    v = vacancy()
+    v.detail = None
+    with pytest.raises(PackageError) as err:
+        await builder(queue_client(captured, []), fb_dir).build(v)
+    assert err.value.code == "no_detail"
+    assert captured == []
