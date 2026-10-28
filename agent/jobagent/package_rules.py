@@ -84,10 +84,13 @@ FORBIDDEN: tuple[tuple[str | None, re.Pattern[str]], ...] = (
     # и как стек нанятой команды («Python/Node.js»)
     (None, re.compile(r"\A(?!.*Claude Code)(?!.*Python/Node).*\bPython\b", re.DOTALL)),
     # Proofix «руководил отделом роста, нанял 3 продажников»
-    ("STR", re.compile(r"\b(руководил\w*|led|headed|возглавил\w*).{0,30}(отдел|growth team|sales team)", _F)),
+    ("STR", re.compile(r"\b(руководил\w*|led|headed|managed|возглавил\w*).{0,30}(отдел|department|growth team|growth org|sales team)", _F)),
     ("STR", re.compile(r"(нанял\w*|hired).{0,20}(продажник|sales)", _F)),
     # Цифры ×3,1 / ×4,9 / ×7,6 по Cheng
-    (None, re.compile(r"(?<![A-Za-zА-Яа-я])[×xх]\s?(3[,.]1|4[,.]9|7[,.]6)(?![\d])", _F)),
+    # префикс «×3,1» и суффикс «3.1x»
+    (None, re.compile(
+        r"(?<![A-Za-zА-Яа-я])[×xх]\s?(3[,.]1|4[,.]9|7[,.]6)(?!\d)"
+        r"|(?<![\d.,])(3[,.]1|4[,.]9|7[,.]6)\s?[x×х](?!\w)", _F)),
 )
 
 # Фразы из таблицы «Avoid» cover_letter_guide.md и русские аналоги (нижний регистр, для сравнения без учёта регистра).

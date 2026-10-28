@@ -153,11 +153,17 @@ def test_forbidden_entries_are_bound_pairs():
     "Strong Python for data processing",
     "Led the growth team at Proofix",
     "Руководил отделом роста в Proofix",
+    "Led a growth department",
+    "Managed growth team of five",
+    "Headed the growth org at Proofix",
     "Hired 3 sales reps",
     "Нанял 3 продажников",
     "A/B test lifted conversion ×3,1",
     "Рост ×4,9 за месяц",
     "Рост ×7,6 по сравнению с прошлым",
+    "Grew sales 3.1x",
+    "4.9x more orders",
+    "Рост в 7,6х за месяц",
 ])
 def test_forbidden_catches(text):
     assert any(p.search(text) for _, p in FORBIDDEN)
