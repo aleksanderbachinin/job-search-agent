@@ -66,9 +66,10 @@ _THOUSANDS = r"\d{1,3}(?:[,   ]\d{3})+(?!\d)"
 _NUMBER = re.compile(
     rf"(?<![A-Za-z0-9_])(?P<num>{_THOUSANDS}|\d+(?:[.,]\d+)?)(?P<suffix>[KkКкM×xXхХ]?)(?![A-Za-z0-9])"
 )
+# «one» не число: в пересказе это «one of», «one-time», а не количество.
 _NUMBER_WORDS = {
     w: i for i, w in enumerate(
-        "one two three four five six seven eight nine ten eleven twelve".split(), start=1
+        "two three four five six seven eight nine ten eleven twelve".split(), start=2
     )
 }
 _NUMBER_WORD = re.compile(r"\b(" + "|".join(_NUMBER_WORDS) + r")\b", re.I)
@@ -123,6 +124,35 @@ def _starts_sentence(text: str, pos: int) -> bool:
     while i >= 0 and text[i] in " \t\"'«“( ":
         i -= 1
     return i < 0 or text[i] in ".!?\n"
+
+
+def _name_shaped(word: str) -> bool:
+    return word[0].isupper() or any(c.isdigit() for c in word)
+
+
+def _inner_capital_or_digit(word: str) -> bool:
+    return any(c.isupper() or c.isdigit() for c in word[1:])
+
+
+def extract_names(text: str, vocabulary: frozenset[str]) -> frozenset[str]:
+    """Названия из словаря, написанные в утверждении как названия (в нижнем регистре).
+
+    Для проверки утверждений, а не фактов. Слово из одних строчных («product», «growth», «it»)
+    в английском пересказе — обычное слово, а не название, хотя в словаре есть «Product Manager»
+    и «IT». Названием считается слово с заглавной буквы или с цифрой (тот же признак, по которому
+    собран словарь). В начале предложения заглавная ничего не значит: там названием считается
+    только слово с заглавной внутри или с цифрой (TikTok, GA4, MPSTATS).
+    """
+    out = set()
+    for m in _latin_words(text):
+        word = m.group()
+        low = word.lower()
+        if low not in vocabulary or not _name_shaped(word):
+            continue
+        if _starts_sentence(text, m.start()) and not _inner_capital_or_digit(word):
+            continue
+        out.add(low)
+    return frozenset(out)
 
 
 def unknown_terms(text: str, vocabulary: frozenset[str]) -> frozenset[str]:

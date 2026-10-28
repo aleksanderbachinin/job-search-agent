@@ -9,6 +9,7 @@ from jobagent.config import AGENT_DIR
 from jobagent.facts import (
     GENERIC_TERMS,
     FactFileError,
+    extract_names,
     extract_numbers,
     extract_terms,
     parse_facts,
@@ -119,7 +120,7 @@ def test_vocabulary_only_from_marked_facts():
     ("с 1,5% до 2,5%", {1.5, 2.5}), ("$18K MRR", {18000}), ("18K $", {18000}), ("$4,5K", {4500}),
     ("1M+ views", {1_000_000}), ("в 4 раза", {4}), ("4x traffic", {4}), ("three pipelines", {3}),
     ("Feb 2026 – Oct 2026", set()),
-    ("×4 к прошлому", {4}), ("4 times", {4}), ("twelve and One", {12, 1}),
+    ("×4 к прошлому", {4}), ("4 times", {4}), ("twelve and One", {12}), ("one of the first, one-time packs", set()),
     ("48–72 часа, $6", {48, 72, 6}), ("GA4, B2C, web2app", set()), ("1,000,000 users", {1_000_000}),
     ("0,3% до 2,5%", {0.3, 2.5}), ("2024 – 2025, 150+ роликов", {150}), ("9+ лет", {9}),
 ])
@@ -130,6 +131,15 @@ def test_extract_numbers(text, expected):
 def test_extract_terms_ignores_case():
     vocab = frozenset({"metabase", "ga4"})
     assert extract_terms("Built in METABASE and GA4, not Kubernetes", vocab) == {"metabase", "ga4"}
+
+
+def test_extract_names_only_name_shaped_words():
+    vocab = frozenset({"metabase", "ga4", "product", "growth", "it", "tiktok"})
+    # Строчные слова из словаря («product», «growth») в утверждении — обычные слова, не названия.
+    assert extract_names("Built the product from zero, steady growth in METABASE and ga4", vocab) == {"metabase", "ga4"}
+    # В начале предложения заглавная ничего не значит: «It», «Product» не названия, «TikTok», «GA4» названия.
+    assert extract_names("It grew. Product led. TikTok and GA4 helped", vocab) == {"tiktok", "ga4"}
+    assert extract_names("Dashboards in Metabase", vocab) == {"metabase"}
 
 
 def test_unknown_terms_skip_sentence_start_and_generic():

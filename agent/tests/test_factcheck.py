@@ -1,4 +1,4 @@
-"""Проверка фактов пакета: структуры ответов и правила состава."""
+"""Проверка фактов пакета: структуры ответов, правила состава и проверка утверждений по фактам."""
 
 import re
 
@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from jobagent.config import AGENT_DIR
+from jobagent.factcheck import Violation, check_claim, check_letter, check_resume
 from jobagent.facts import parse_facts
 from jobagent.package_models import (
     Claim,
@@ -212,3 +213,235 @@ def test_stop_phrases_both_languages():
     for lang, phrases in STOP_PHRASES.items():
         assert phrases and all(p == p.lower() for p in phrases), lang
     assert {"командный игрок", "я идеально подхожу", "я увлечён"} <= set(STOP_PHRASES["ru"])
+
+
+# ---------- проверка утверждений по фактам ----------
+# Номера фактов сверены с experience/Bachinin_Alexander_Experience.md: MPS-1 (1 000+ MAU),
+# AEZ-1 ($18K MRR, 6,6%), AEZ-2 (1,5% → 2,5%), GPTS-6 (продление 43% → 57%, 70% → 76%),
+# GPTS-2 (активация 81%), MPS-0 (описание MPSTATS), MPS-2 (регистрация +25%), VIBE-1 (UX платформы).
+
+
+@pytest.fixture(scope="module")
+def fb():
+    return parse_facts(EXPERIENCE)
+
+
+@pytest.fixture
+def req_map():
+    return RequirementMap(
+        role_type="builder",
+        requirements=[Requirement(text="Strong Python", facts=[], status="gap")],
+    )
+
+
+def codes(violations: list[Violation]) -> set[str]:
+    return {v.code for v in violations}
+
+
+def test_true_bullets_from_manual_resume_pass(fb, req_map):
+    # Правдивые пункты ручного резюме AI Product Builder, сверенные с файлом опыта.
+    ok = [
+        ("MPS", "Interviewed sellers, found an unmet need and launched a new analytics tool that reached 1,000+ MAU.", ["MPS-1"]),
+        ("AEZ", "Built the product from zero to $18K MRR (6.6% average monthly growth); raised paid conversion from 1.5% to 2.5%.", ["AEZ-1", "AEZ-2"]),
+        ("GPTS", "Lifecycle emails lifted first renewal from 43% to 57% and long-term retention from 70% to 76%.", ["GPTS-6"]),
+        ("AEZ", "Localized the product into English, Chinese and Portuguese: +30% paying users from these markets in the first month.", ["AEZ-3"]),
+        ("VIBE", "Owned UX of VibeCamp, an internal AI platform at i-free, one of the first in the company.", ["VIBE-0", "VIBE-1"]),
+    ]
+    for code, text, facts in ok:
+        assert check_claim(Claim(text=text, facts=facts), "b", frozenset({code}), fb, req_map) == [], text
+
+
+def test_invented_number(fb, req_map):
+    v = check_claim(Claim(text="Raised registration conversion by 35%", facts=["MPS-2"]), "b", frozenset({"MPS"}), fb, req_map)
+    assert [x.code for x in v] == ["number"] and "35" in v[0].detail
+    assert v[0].path == "b"
+
+
+def test_number_from_other_product(fb, req_map):
+    v = check_claim(Claim(text="81% activation", facts=["GPTS-2"]), "b", frozenset({"MPS"}), fb, req_map)
+    assert "wrong_employer" in codes(v)
+    assert "GPTS-2" in next(x.detail for x in v if x.code == "wrong_employer")
+
+
+def test_invented_market_intelligence(fb, req_map):
+    v = check_claim(
+        Claim(text="Market intelligence for Wildberries and Ozon with low-code tools", facts=["MPS-0"]),
+        "b", frozenset({"MPS"}), fb, req_map,
+    )
+    assert {"term", "unknown_term"} & codes(v)
+
+
+def test_invented_unknown_tool(fb, req_map):
+    v = check_claim(Claim(text="Built dashboards in Tableau and Looker", facts=["MPS-5"]), "b", frozenset({"MPS"}), fb, req_map)
+    unknown = [x for x in v if x.code == "unknown_term"]
+    assert unknown and "Tableau" in unknown[0].detail and "Looker" in unknown[0].detail
+
+
+def test_masked_gap(fb, req_map):
+    c = Claim(text="Hands-on with data workflows", facts=["VIBE-1"], requirement="Strong Python")
+    v = check_claim(c, "b", frozenset({"VIBE"}), fb, req_map)
+    assert "gap" in codes(v)
+
+
+def test_forbidden_claim(fb, req_map):
+    c = Claim(text="Ran AI hackathons for employees", facts=["VIBE-1"])
+    assert "forbidden" in codes(check_claim(c, "b", frozenset({"VIBE"}), fb, req_map))
+
+
+def test_forbidden_bound_pattern_applies_by_job_or_cited_fact(fb, req_map):
+    hack = Claim(text="Ran AI hackathons for employees", facts=["VIBE-1"])
+    # Summary без места работы: шаблон VIBE срабатывает по месту работы процитированного факта.
+    assert "forbidden" in codes(check_claim(hack, "summary[0]", None, fb, req_map))
+    # Шаблон MPS (ARPU) не применяется к пункту GPT Scrambler с фактами GPT Scrambler.
+    arpu = Claim(text="Tracked LTV and ARPU of subscribers", facts=["GPTS-6"])
+    assert "forbidden" not in codes(check_claim(arpu, "b", frozenset({"GPTS"}), fb, req_map))
+    assert "forbidden" in codes(check_claim(arpu, "b", frozenset({"MPS"}), fb, req_map))
+    # Шаблон без места работы применяется везде.
+    cpo = Claim(text="Acted as CPO", facts=["AEZ-5"])
+    assert "forbidden" in codes(check_claim(cpo, "b", frozenset({"AEZ"}), fb, req_map))
+
+
+def test_unknown_fact_and_no_facts(fb, req_map):
+    v = check_claim(Claim(text="Grew things", facts=["MPS-99"]), "b", frozenset({"MPS"}), fb, req_map)
+    assert "unknown_fact" in codes(v) and "MPS-99" in v[0].detail
+    assert codes(check_claim(Claim(text="Grew things", facts=[]), "b", frozenset({"MPS"}), fb, req_map)) == {"no_facts"}
+
+
+def test_summary_may_cite_any_employer_except_never(fb, req_map):
+    ok = Claim(text="Launched a new analytics tool that reached 1,000+ MAU.", facts=["MPS-1"])
+    assert check_claim(ok, "summary[0]", None, fb, req_map) == []
+    never = Claim(text="Stopped a project", facts=["CLOWE-2"])
+    assert "wrong_employer" in codes(check_claim(never, "summary[0]", None, fb, req_map))
+
+
+def _bullets(code: str, fb, n: int) -> list[Claim]:
+    ids = sorted((f for f in fb.facts if f.startswith(code + "-") and f != f"{code}-0"), key=lambda f: int(f.split("-")[1]))
+    ids = ids or [f"{code}-1"]
+    return [Claim(text="Owned the work", facts=[ids[i % len(ids)]]) for i in range(n)]
+
+
+def _resume(fb, jobs: list[tuple[str, str, int]], headline: str = "AI PM / AI Product Builder", skills=None) -> ResumeDraft:
+    return ResumeDraft(
+        headline=headline,
+        summary=[Claim(text="Launched a new analytics tool that reached 1,000+ MAU.", facts=["MPS-1"])],
+        jobs=[Job(employer=c, title=t, bullets=_bullets(c, fb, n)) for c, t, n in jobs],
+        skills=skills if skills is not None else [Claim(text="SQL, GA4, Metabase", facts=["SKILL-3"])],
+    )
+
+
+VALID_BUILDER = [
+    ("VIBE", "Product Manager (UX & AI Development)", 4),
+    ("GPTS", "Head of Product", 3),
+    ("MPS", "Product Manager", 3),
+    ("AEZ", "Product Manager & Co-founder", 2),
+]
+MECHANICS = {"composition", "bullets", "headline", "title", "language"}
+
+
+def test_resume_valid_has_no_mechanical_violations(fb, req_map):
+    v = check_resume(_resume(fb, VALID_BUILDER), req_map, fb, "en")
+    assert not codes(v) & MECHANICS, v
+    assert not [x for x in v if x.code == "wrong_employer"]
+
+
+def test_resume_composition(fb, req_map):
+    no_vibe = [j for j in VALID_BUILDER if j[0] != "VIBE"]
+    assert "composition" in codes(check_resume(_resume(fb, no_vibe), req_map, fb, "en"))
+    with_ck = VALID_BUILDER[:3] + [("CK", "Product Marketing Manager (Growth)", 1)] + VALID_BUILDER[3:]
+    assert "composition" in codes(check_resume(_resume(fb, with_ck), req_map, fb, "en"))
+    reordered = [VALID_BUILDER[1], VALID_BUILDER[0]] + VALID_BUILDER[2:]
+    assert "composition" in codes(check_resume(_resume(fb, reordered), req_map, fb, "en"))
+    assert "headline" in codes(check_resume(_resume(fb, VALID_BUILDER, headline="CPO"), req_map, fb, "en"))
+    five = [("VIBE", "Product Manager (UX & AI Development)", 5)] + VALID_BUILDER[1:]
+    bullets = [x for x in check_resume(_resume(fb, five), req_map, fb, "en") if x.code == "bullets"]
+    assert [x.path for x in bullets] == ["jobs[0]"]
+
+
+def test_resume_title_skills_and_unknown_employer(fb, req_map):
+    bad_title = [("VIBE", "Chief Product Officer", 4)] + VALID_BUILDER[1:]
+    v = check_resume(_resume(fb, bad_title), req_map, fb, "en")
+    assert [x.path for x in v if x.code == "title"] == ["jobs[0].title"]
+    skills = [Claim(text="SQL", facts=["MPS-6"])]
+    v = check_resume(_resume(fb, VALID_BUILDER, skills=skills), req_map, fb, "en")
+    assert any(x.code == "wrong_employer" and x.path == "skills[0]" for x in v)
+    # Неизвестный код места работы: нарушения, а не KeyError.
+    v = check_resume(_resume(fb, VALID_BUILDER[:3] + [("XYZ", "PM", 1)] + VALID_BUILDER[3:]), req_map, fb, "en")
+    assert {"composition", "title"} <= codes(v)
+
+
+def test_resume_paths_and_language(fb, req_map):
+    draft = _resume(fb, VALID_BUILDER)
+    draft.jobs[1].bullets[2] = Claim(text="Raised registration conversion by 35%", facts=["GPTS-2"])
+    draft.summary[0] = Claim(text="Запустил новый аналитический инструмент: 1 000+ MAU.", facts=["MPS-1"])
+    v = check_resume(draft, req_map, fb, "en")
+    assert any(x.path == "jobs[1].bullets[2]" and x.code == "number" for x in v)
+    assert any(x.path == "summary[0]" and x.code == "language" for x in v)
+
+
+def _letter(sentences: list[str], subject: str | None = "Senior Product Manager at Acme") -> LetterDraft:
+    return LetterDraft(
+        subject=subject,
+        salutation="Hello Acme team,",
+        sentences=[LetterSentence(text=t, facts=[], paragraph=1) for t in sentences],
+        closing="Best regards,",
+    )
+
+
+GOOD_LETTER = [
+    "Acme is hiring a Senior Product Manager to grow its analytics product.",
+    "I would like to talk about the role.",
+]
+
+
+def test_letter_valid(fb, req_map):
+    draft = _letter(GOOD_LETTER)
+    draft.sentences.append(LetterSentence(
+        text="At MPSTATS I launched a new analytics tool that reached 1,000+ MAU.", facts=["MPS-1"], paragraph=2))
+    assert check_letter(draft, req_map, fb, "en", "Acme", "Senior Product Manager") == []
+
+
+def test_letter_mechanics(fb, req_map):
+    def run(draft, lang="en", company="Acme"):
+        return check_letter(draft, req_map, fb, lang, company, "Senior Product Manager")
+
+    v = run(_letter(GOOD_LETTER, subject="Senior Product Manager — Acme"))
+    assert [(x.path, x.code) for x in v] == [("letter.subject", "dash")]
+    assert "length" in codes(run(_letter(GOOD_LETTER + ["word " * 320])))
+    assert "stop_phrase" in codes(run(_letter(GOOD_LETTER + ["I am a team player."])))
+    ru = _letter(["Acme ищет Senior Product Manager, и мне интересна эта роль в команде продукта."], subject=None)
+    ru.salutation, ru.closing = "Здравствуйте, команда Acme!", "С уважением,"
+    assert "language" in codes(run(ru))
+    assert "language" not in codes(run(ru, lang="ru"))
+    no_company = _letter(["We should talk about the Senior Product Manager role."], subject=None)
+    no_company.salutation = "Hello,"
+    assert any(x.code == "title" for x in run(no_company))
+    # Компания скрыта: её названия в письме не требуется.
+    assert not any(x.code == "title" for x in run(no_company, company=None))
+
+
+def test_letter_claim_checks_only_sentences_with_facts(fb, req_map):
+    draft = _letter(GOOD_LETTER + ["Your 3M users love the product."])
+    assert check_letter(draft, req_map, fb, "en", "Acme", "Senior Product Manager") == []
+    draft.sentences.append(LetterSentence(text="I raised registration conversion by 35%.", facts=["MPS-2"], paragraph=2))
+    v = check_letter(draft, req_map, fb, "en", "Acme", "Senior Product Manager")
+    assert [(x.path, x.code) for x in v] == [("letter[3]", "number")]
+    gap = LetterSentence(text="I am strong in data work.", facts=[], paragraph=2, requirement="Strong Python")
+    draft.sentences.append(gap)
+    assert ("letter[4]", "gap") in {(x.path, x.code) for x in check_letter(draft, req_map, fb, "en", "Acme", "Senior Product Manager")}
+
+
+def test_violation_detail_has_no_claim_text(fb, req_map):
+    claims = [
+        (Claim(text="Spearheaded marketplace intelligence for Wildberries sellers, boosting revenue 35%",
+               facts=["MPS-0", "GPTS-2", "MPS-77"], requirement="Strong Python"), frozenset({"MPS"})),
+        (Claim(text="Organized internal hackathons with Tableau dashboards", facts=["VIBE-1"]), frozenset({"VIBE"})),
+        (Claim(text="Organized internal hackathons", facts=[]), frozenset({"VIBE"})),
+    ]
+    found = set()
+    for claim, allowed in claims:
+        for v in check_claim(claim, "b", allowed, fb, req_map):
+            found.add(v.code)
+            words = {w.lower() for w in re.findall(r"[A-Za-zА-Яа-я]{4,}", claim.text)}
+            leaked = {w for w in re.findall(r"[A-Za-zА-Яа-я]{4,}", v.detail.lower()) if w in words}
+            assert leaked <= {"wildberries", "tableau"}, (v.code, leaked)
+    assert {"unknown_fact", "wrong_employer", "number", "term", "unknown_term", "forbidden", "gap", "no_facts"} <= found
