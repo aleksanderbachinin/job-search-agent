@@ -24,6 +24,8 @@ STEPS = ("triage", "prefilter", "scoring")
 FILTER_STEPS = ("triage", "prefilter")
 MAX_SCORING_LIMIT = 30
 CONCURRENCY = 4
+# Для правил по тексту: возраст вакансии в снимке не важен.
+NO_AGE_LIMIT = 100_000
 
 SNAPSHOT_PATH = AGENT_DIR / "data" / "eval.sqlite3"
 EVALS_DIR = AGENT_DIR / "data" / "evals"
@@ -74,8 +76,8 @@ def select(step: str, vacancies: list[Vacancy], limit: int | None = None) -> lis
     """Какие вакансии видит шаг.
 
     triage — карточки, которые в работе дошли бы до Haiku: не baseline и прошли правила.
-    prefilter — вакансии с сохранённым полным текстом. Свежесть не проверяем: в снимке почти всё
-    уже старое, а проверяем мы промпт.
+    prefilter — вакансии с сохранённым полным текстом, которые прошли правила по карточке и тексту.
+    Свежесть не проверяем: в снимке почти всё уже старое, а проверяем мы промпт.
     scoring — вакансии с полным текстом и старой оценкой, по одной на оценку сверху вниз
     (отклики первыми), пока не наберётся limit.
     """
@@ -83,7 +85,7 @@ def select(step: str, vacancies: list[Vacancy], limit: int | None = None) -> lis
         return [v for v in vacancies if v.status != "baseline" and rules.check_card(v.card) is None]
     with_detail = [v for v in vacancies if v.detail]
     if step == "prefilter":
-        return with_detail
+        return [v for v in with_detail if not rules_reject(v)]
     groups: dict[int, list[Vacancy]] = {}
     for v in with_detail:
         if v.score is not None:
@@ -95,6 +97,13 @@ def select(step: str, vacancies: list[Vacancy], limit: int | None = None) -> lis
             if q and (limit is None or len(picked) < limit):
                 picked.append(q.pop(0))
     return picked
+
+
+def rules_reject(v: Vacancy) -> bool:
+    if rules.check_card(v.card):
+        return True
+    rejection = rules.check_detail(v.detail or {}, max_age_days=NO_AGE_LIMIT)
+    return rejection is not None and rejection[0] != "stale"
 
 
 async def evaluate(step: str, v: Vacancy, scorer: Any) -> tuple[dict[str, Any] | None, Any]:

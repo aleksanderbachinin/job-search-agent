@@ -232,3 +232,19 @@ async def test_scoring_rerun_limited_to_vacancies_of_previous_run(tmp_path):
     await run(tmp_path, "scoring", scorer, limit=30, only={"6-low", "7-one", "9-triage"})
     # 9-triage без полного текста и оценки — его не берём даже по списку.
     assert sorted(s for _, s in scorer.calls) == ["6-low", "7-one"]
+
+
+async def test_prefilter_skips_vacancies_rules_reject_but_not_old_ones(tmp_path):
+    db_path = await make_db(tmp_path / "eval.sqlite3")
+    db = Database(db_path)
+    await db.connect()
+    ua = await db.get("2-top")
+    await db.update("2-top", detail=dict(ua.detail, vacancy_language="ua"))
+    old = await db.get("3-four")
+    await db.update("3-four", detail=dict(old.detail, created_at="2026-01-01T00:00:00Z"))
+    await db.close()
+    scorer = FakeScorer()
+    await evals.run_eval("prefilter", db_path, scorer, tmp_path / "evals")
+    called = {s for _, s in scorer.calls}
+    # Украинскую в работе отсекают правила до Haiku; старую оцениваем: проверяем промпт, а не свежесть.
+    assert "2-top" not in called and "3-four" in called
