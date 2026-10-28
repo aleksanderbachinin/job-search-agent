@@ -3,11 +3,13 @@
 import json
 
 import httpx
+import pytest
 
 from jobagent.config import AGENT_DIR
 from jobagent.pipeline import Pipeline
 from jobagent.research import LinkedInResearch, name_variants, skip_reason
-from jobagent.scoring import CANDIDATE_BRIEF, MASTER_RESUME, load_knowledge, resume_files, vacancy_for_prompt
+from jobagent import rules
+from jobagent.scoring import MASTER_RESUME, load_knowledge, resume_files, vacancy_for_prompt
 from test_service import CARD, FakeHirify, FakeScorer, FakeSink, db, detail  # noqa: F401 (db — фикстура)
 
 PEOPLE = {
@@ -181,5 +183,16 @@ def test_real_knowledge_dir_loads_experience_file():
     assert "Не засчитывать" in resume and "GPT Scrambler" in resume
 
 
-def test_brief_accepts_middle_and_c_level():
-    assert "middle" in CANDIDATE_BRIEF and "C-level" in CANDIDATE_BRIEF
+@pytest.mark.parametrize(
+    "grades,rejected",
+    [
+        (["middle"], False),
+        (["c_level"], False),
+        (["director", "c_level"], False),
+        (["middle", "senior"], False),
+        (["junior"], True),
+        (["trainee", "intern"], True),
+    ],
+)
+def test_rules_pass_middle_and_c_level_and_reject_junior_only(grades, rejected):
+    assert (rules.check_card({**CARD, "grades": grades}) is not None) == rejected

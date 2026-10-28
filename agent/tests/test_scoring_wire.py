@@ -4,10 +4,26 @@ import json
 
 import anthropic
 import httpx2
+import pytest
 
-from jobagent.config import AGENT_DIR
-from jobagent.scoring import Scorer
+from jobagent.scoring import MASTER_RESUME, Scorer
 from test_service import CARD, assessment, detail
+
+TRIAGE_MODEL = "test-triage-model"
+SCORING_MODEL = "test-scoring-model"
+CRITERIA_MARKER = "МАРКЕР-КРИТЕРИЕВ-7731"
+RESUME_MARKER = "МАРКЕР-РЕЗЮМЕ-4402"
+EXAMPLES_MARKER = "МАРКЕР-ПРИМЕРОВ-9158"
+
+
+@pytest.fixture
+def knowledge(tmp_path):
+    """Своя папка знаний с маркерами: по ним видно, какой файл в какой prompt попал."""
+    (tmp_path / "search_criteria.md").write_text(f"критерии {CRITERIA_MARKER}", encoding="utf-8")
+    (tmp_path / "applied_examples.md").write_text(f"примеры {EXAMPLES_MARKER}", encoding="utf-8")
+    (tmp_path / "experience").mkdir()
+    (tmp_path / "experience" / MASTER_RESUME).write_text(f"опыт {RESUME_MARKER}", encoding="utf-8")
+    return tmp_path
 
 
 def make_client(captured: list, payload: dict, model: str):
@@ -37,58 +53,58 @@ def make_client(captured: list, payload: dict, model: str):
     )
 
 
-async def test_triage_request_and_parse():
+async def test_triage_request_and_parse(knowledge):
     captured = []
-    client = make_client(captured, {"relevant": False, "reason": "дизайнер"}, "claude-haiku-5-5")
-    scorer = Scorer(AGENT_DIR.parent, "claude-haiku-5-5", "claude-sonnet-5-5", client=client)
+    client = make_client(captured, {"relevant": False, "reason": "дизайнер"}, TRIAGE_MODEL)
+    scorer = Scorer(knowledge, TRIAGE_MODEL, SCORING_MODEL, client=client)
     triage, usage = await scorer.triage(CARD)
     assert triage.relevant is False and usage.cache_read_tokens == 3 and usage.cache_write_tokens == 7
     body = json.loads(captured[0].content)
-    assert body["model"] == "claude-haiku-5-5"
-    assert body["output_config"]["effort"] == "low"
+    assert body["model"] == TRIAGE_MODEL
     assert body["output_config"]["format"]["type"] == "json_schema"
     assert "<card>" in body["messages"][0]["content"]
 
 
-async def test_assess_request_uses_cache_fallbacks_and_knowledge():
+async def test_assess_request_uses_cache_fallbacks_and_knowledge(knowledge):
     captured = []
-    client = make_client(captured, assessment(score=9).model_dump(), "claude-sonnet-5-5")
-    scorer = Scorer(AGENT_DIR.parent, "claude-haiku-5-5", "claude-sonnet-5-5", "medium", client=client)
+    client = make_client(captured, assessment(score=9).model_dump(), SCORING_MODEL)
+    scorer = Scorer(knowledge, TRIAGE_MODEL, SCORING_MODEL, "high", client=client)
     result, _ = await scorer.assess(detail(), [{"id": 1, "name": "PM remote"}])
     assert result.score == 5  # зажато в 1..5
     req = captured[0]
     body = json.loads(req.content)
+    assert body["model"] == SCORING_MODEL
     assert body["fallbacks"] == "default"
     assert "server-side-fallback-2026-07-01" in req.headers["anthropic-beta"]
-    assert body["output_config"]["effort"] == "medium"
+    assert body["output_config"]["effort"] == "high"
     schema = body["output_config"]["format"]["schema"]
     assert "ru_label" in schema["properties"]
     system = body["system"][0]
     assert system["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
-    assert "<search_criteria>" in system["text"] and "<resume>" in system["text"]
-    assert "<applied_examples>" in system["text"]
+    # Sonnet видит критерии, опыт и примеры откликов.
+    assert all(m in system["text"] for m in (CRITERIA_MARKER, RESUME_MARKER, EXAMPLES_MARKER))
     assert "Remoteria" in body["messages"][0]["content"]
 
 
-async def test_prefilter_request_uses_haiku_criteria_and_long_cache():
+async def test_prefilter_request_uses_triage_model_criteria_and_long_cache(knowledge):
     captured = []
-    client = make_client(captured, {"relevant": False, "reason": "гибрид в Москве"}, "claude-haiku-5-5")
-    scorer = Scorer(AGENT_DIR.parent, "claude-haiku-5-5", "claude-sonnet-5-5", client=client)
+    client = make_client(captured, {"relevant": False, "reason": "гибрид в Москве"}, TRIAGE_MODEL)
+    scorer = Scorer(knowledge, TRIAGE_MODEL, SCORING_MODEL, client=client)
     result, usage = await scorer.prefilter(detail(), [{"id": 1, "name": "PM remote"}])
     assert result.relevant is False and usage.cache_write_tokens == 7
     body = json.loads(captured[0].content)
-    assert body["model"] == "claude-haiku-5-5"
+    assert body["model"] == TRIAGE_MODEL
     assert body["output_config"]["format"]["type"] == "json_schema"
     system = body["system"][0]
     assert system["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
-    # Стоп-факторы берутся из критериев; резюме Haiku не нужно.
-    assert "<search_criteria>" in system["text"] and "Стоп-факторы" in system["text"]
-    assert "<resume>" not in system["text"]
+    # Стоп-факторы Haiku берёт из критериев; резюме и примеры ему не нужны (лишние токены в кеше).
+    assert CRITERIA_MARKER in system["text"]
+    assert RESUME_MARKER not in system["text"] and EXAMPLES_MARKER not in system["text"]
     content = body["messages"][0]["content"]
     assert content.startswith("<vacancy>") and "Remoteria" in content
 
 
-async def test_prefilter_lets_vacancy_through_on_refusal():
+async def test_prefilter_lets_vacancy_through_on_refusal(knowledge):
     def handler(request):
         return httpx2.Response(
             200,
@@ -96,7 +112,7 @@ async def test_prefilter_lets_vacancy_through_on_refusal():
                 "id": "msg_test",
                 "type": "message",
                 "role": "assistant",
-                "model": "claude-haiku-5-5",
+                "model": TRIAGE_MODEL,
                 "content": [],
                 "stop_reason": "refusal",
                 "stop_sequence": None,
@@ -107,6 +123,6 @@ async def test_prefilter_lets_vacancy_through_on_refusal():
     client = anthropic.AsyncAnthropic(
         api_key="test", http_client=anthropic.DefaultAsyncHttpxClient(transport=httpx2.MockTransport(handler))
     )
-    scorer = Scorer(AGENT_DIR.parent, "claude-haiku-5-5", "claude-sonnet-5-5", client=client)
+    scorer = Scorer(knowledge, TRIAGE_MODEL, SCORING_MODEL, client=client)
     result, _ = await scorer.prefilter(detail(), [])
     assert result.relevant is True
