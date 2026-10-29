@@ -1,7 +1,6 @@
 """Проверка промптов (jobagent.evals): без сети, на фейковом Scorer и базе в tmp_path."""
 
 import asyncio
-import hashlib
 import json
 import sqlite3
 
@@ -28,6 +27,7 @@ class FakeScorer:
         self.fail = set(fail)
         self.prefilter_system = [{"type": "text", "text": prompt}]
         self.scoring_system = [{"type": "text", "text": "SCORING v1"}]
+        self.triage_system = "TRIAGE v1"
         self.calls: list[tuple[str, str]] = []
         self.in_flight = 0
         self.max_in_flight = 0
@@ -162,9 +162,18 @@ async def test_run_is_saved_with_verdicts_prompt_hash_and_git_sha(tmp_path, monk
     saved = json.loads(result["path"].read_text(encoding="utf-8"))
     assert result["path"].parent == tmp_path / "evals" and result["path"].name.endswith("-prefilter.json")
     assert saved["git_sha"] == "abc1234"
-    assert saved["prompt_hash"] == hashlib.sha256(b"PREFILTER v1").hexdigest()[:12]
+    assert len(saved["prompt_hash"]) == 12
     low = next(i for i in saved["items"] if i["slug"] == "6-low")
     assert low["verdict"] == {"relevant": False, "reason": "junior"} and low["bucket"] == "1-2"
+
+
+async def test_prompt_hash_changes_with_prompt_text_and_output_schema(tmp_path, monkeypatch):
+    # Порядок полей схемы меняет ответы модели так же, как текст промпта: --compare должен это видеть.
+    base = await run(tmp_path, "prefilter", FakeScorer())
+    text = await run(tmp_path, "prefilter", FakeScorer(prompt="PREFILTER v2"))
+    monkeypatch.setitem(evals.OUTPUT_SCHEMAS, "prefilter", Triage)
+    schema = await run(tmp_path, "prefilter", FakeScorer())
+    assert len({base["prompt_hash"], text["prompt_hash"], schema["prompt_hash"]}) == 3
 
 
 async def test_compare_shows_changed_vacancies_and_before_after(tmp_path):

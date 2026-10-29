@@ -16,11 +16,12 @@ from pathlib import Path
 from typing import Any
 
 import aiosqlite
+from anthropic import transform_schema
 
 from . import rules
 from .config import AGENT_DIR
 from .db import Vacancy
-from .scoring import TRIAGE_SYSTEM
+from .scoring import Assessment, PrefilterAnswer, Triage
 
 STEPS = ("triage", "prefilter", "scoring")
 FILTER_STEPS = ("triage", "prefilter")
@@ -192,9 +193,13 @@ def summarize(step: str, items: list[dict[str, Any]], min_score: int = 4) -> dic
     }
 
 
+# Схема ответа входит в хэш промпта: порядок полей меняет ответы модели так же, как текст.
+OUTPUT_SCHEMAS = {"triage": Triage, "prefilter": PrefilterAnswer, "scoring": Assessment}
+
+
 def prompt_text(scorer: Any, step: str) -> str:
     if step == "triage":
-        return TRIAGE_SYSTEM
+        return scorer.triage_system
     blocks = scorer.prefilter_system if step == "prefilter" else scorer.scoring_system
     return "\n\n".join(b["text"] for b in blocks)
 
@@ -250,7 +255,9 @@ async def run_eval(
         "step": step,
         "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "git_sha": git_sha(),
-        "prompt_hash": hashlib.sha256(prompt.encode()).hexdigest()[:12],
+        "prompt_hash": hashlib.sha256(
+            (prompt + json.dumps(transform_schema(OUTPUT_SCHEMAS[step]), ensure_ascii=False)).encode()
+        ).hexdigest()[:12],
         "model": scorer.scoring_model if step == "scoring" else scorer.triage_model,
         "db": str(db_path),
         "summary": summarize(step, items, min_score),
