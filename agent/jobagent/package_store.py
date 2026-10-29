@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +25,7 @@ from .factcheck import Violation
 from .facts import FactBase
 from .package import BuiltPackage
 from .package_models import LetterDraft, RequirementMap, ResumeDraft
-from .pdf import Contacts, to_markdown
+from .pdf import LOCATION_LINE, Contacts, to_markdown
 
 _SLUG = re.compile(r"[\w][\w.-]*")
 _STATUS_LABEL = {"closed": "закрыто", "partial": "частично", "gap": "пробел"}
@@ -63,6 +63,21 @@ def map_to_markdown(req_map: RequirementMap) -> str:
     return "\n".join(lines) + "\n"
 
 
+def write_files(path: Path, built: BuiltPackage, fb: FactBase, contacts: Contacts) -> None:
+    """Файлы для чтения глазами: PDF, resume.md, letter.md, experience_map.md. Папка — только для владельца.
+
+    Строка места и языков в resume.md — по языку пакета, как в PDF.
+    """
+    if Path(built.filename).name != built.filename:
+        raise ValueError("недопустимое имя PDF")
+    _private_dir(path)
+    contacts = replace(contacts, location_line=LOCATION_LINE[built.lang])
+    _write(path / built.filename, built.pdf)
+    _write_text(path / "resume.md", to_markdown(built.resume, fb, contacts, built.lang))
+    _write_text(path / "letter.md", built.letter_text)
+    _write_text(path / "experience_map.md", map_to_markdown(built.req_map))
+
+
 class PackageStore:
     def __init__(self, db: Database, root: Path, fb: FactBase, contacts: Contacts):
         self.db = db
@@ -83,13 +98,10 @@ class PackageStore:
         if Path(built.filename).name != built.filename:
             raise ValueError("недопустимое имя PDF")
         path = self._dir(slug, version)
-        for d in (self.root, path.parent, path):
+        for d in (self.root, path.parent):
             _private_dir(d)
+        write_files(path, built, self.fb, self.contacts)
         _write_json(path / "resume.json", built.resume.model_dump())
-        _write_text(path / "resume.md", to_markdown(built.resume, self.fb, self.contacts, built.lang))
-        _write(path / built.filename, built.pdf)
-        _write_text(path / "letter.md", built.letter_text)
-        _write_text(path / "experience_map.md", map_to_markdown(built.req_map))
         _write_json(path / "experience_map.json", built.req_map.model_dump())
         _write_json(
             path / "check.json",

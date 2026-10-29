@@ -442,10 +442,14 @@ def test_stats_render_packages():
     ]
     text = render_stats({"package_ready": 2, "package_redo": 1}, {}, "за 7 дней", usages)
     assert "Пакеты: 2 собрано, 1 переделок, средняя стоимость $2.25" in text
-    # Неизвестная модель (задана переменной окружения) в среднюю не входит, но видна.
-    usages.append(llm_usage("claude-next", input_tokens=5))
+    # Модель без цены (задана переменной окружения): средняя по известным ценам, её затраты — токенами.
+    usages.append(llm_usage("claude-next", input_tokens=5, output_tokens=7, cache_read_tokens=11))
+    usages.append(llm_usage("claude-next", input_tokens=1))
     text = render_stats({"package_ready": 2}, {}, "за 7 дней", usages)
-    assert "Пакеты: 2 собрано, 0 переделок, средняя стоимость $2.25, цены нет для: claude-next" in text
+    assert (
+        "Пакеты: 2 собрано, 0 переделок, средняя стоимость $2.25 без claude-next; "
+        "токены без цены: ввод 6, вывод 7, кеш чтение 11, кеш запись 0"
+    ) in text
     # Сборки были, но ни одна не дошла до конца: средней нет.
     text = render_stats({"package_requested": 1}, {}, "за 7 дней", usages[:1])
     assert "Пакеты: 0 собрано, 0 переделок, потрачено $4.00" in text

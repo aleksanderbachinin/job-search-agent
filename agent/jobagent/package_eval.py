@@ -87,10 +87,10 @@ def _cost(usages: list[tuple[str, Usage]]) -> tuple[float, list[str]]:
     return total, sorted(unknown)
 
 
-def _item(name: str, v: Vacancy) -> dict[str, Any]:
+def _item(name: str, vacancy_id: int | None) -> dict[str, Any]:
     return {
         "fixture": name,
-        "vacancy_id": v.vacancy_id,
+        "vacancy_id": vacancy_id,
         "error": None,
         "lang": None,
         "role_type": None,
@@ -108,15 +108,23 @@ def _item(name: str, v: Vacancy) -> dict[str, Any]:
     }
 
 
+def _error_code(err: Exception) -> str:
+    """Только тип исключения: в тексте бывают куски вакансии или ответа модели."""
+    prefix = "api_error" if isinstance(err, anthropic.APIError) else "error"
+    return f"{prefix}:{type(err).__name__}"
+
+
 async def evaluate(name: str, v: Vacancy, builder: PackageBuilder) -> dict[str, Any]:
-    item = _item(name, v)
+    """Одна вакансия. Любой сбой становится кодом в отчёте: прогон стоит денег и не должен обрываться."""
+    item = _item(name, v.vacancy_id)
     try:
         built, usages = await builder.build(v)
     except PackageError as err:
         item["error"], usages = err.code, err.usages
         built = None
-    except anthropic.APIError as err:
-        item["error"], usages = f"api_error:{type(err).__name__}", []
+    except Exception as err:
+        # Затраты вызовов до сбоя здесь не видны: build отдаёт их только с PackageError.
+        item["error"], usages = _error_code(err), []
         built = None
     calls = Counter(step for step, _ in usages)
     item["calls"] = dict(calls)
@@ -124,17 +132,20 @@ async def evaluate(name: str, v: Vacancy, builder: PackageBuilder) -> dict[str, 
     item["cost_usd"], item["unpriced_models"] = _cost(usages)
     if built is None:
         return item
-    item.update(
-        lang=built.lang,
-        role_type=built.role_type,
-        removed=dict(sorted(Counter(x.code for x in built.removed).items())),
-        warnings=len(built.warnings),
-        cut_steps=built.cut_steps,
-        pages=pdf_pages(built.pdf),
-        letter_words=word_count(built.letter_text),
-        dashes=len(find_dashes(built.letter_text)),
-        unsourced=unsourced(v, built, builder),
-    )
+    try:
+        item.update(
+            lang=built.lang,
+            role_type=built.role_type,
+            removed=dict(sorted(Counter(x.code for x in built.removed).items())),
+            warnings=len(built.warnings),
+            cut_steps=built.cut_steps,
+            pages=pdf_pages(built.pdf),
+            letter_words=word_count(built.letter_text),
+            dashes=len(find_dashes(built.letter_text)),
+            unsourced=unsourced(v, built, builder),
+        )
+    except Exception as err:  # сбой в подсчёте — тоже код, пакет в итог не входит
+        item["error"] = _error_code(err)
     return item
 
 
@@ -160,7 +171,14 @@ async def run(fixtures: Path, builder: PackageBuilder, out_dir: Path | None = No
     """Собирает пакет по каждой фикстуре по очереди; с out_dir сохраняет отчёт туда (ключ path)."""
     items = []
     for path in sorted(fixtures.glob("*.json")):
-        items.append(await evaluate(path.stem, load_fixture(path), builder))
+        try:
+            v = load_fixture(path)
+        except Exception as err:  # битая фикстура не обрывает прогон
+            item = _item(path.stem, None)
+            item["error"] = _error_code(err)
+            items.append(item)
+            continue
+        items.append(await evaluate(path.stem, v, builder))
     report: dict[str, Any] = {
         "step": "package",
         "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),

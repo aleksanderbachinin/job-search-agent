@@ -47,6 +47,12 @@ class Contacts:
     location_line: str
 
 
+def contact_links(contacts: Contacts) -> list[tuple[str, str]]:
+    """Ссылки шапки резюме (подпись, адрес). Telegram необязателен: пустой не выводится, без мёртвой ссылки."""
+    links = [("LinkedIn", contacts.linkedin), ("Telegram", contacts.telegram)]
+    return [(label, url) for label, url in links if url]
+
+
 LOCATION_LINE: dict[Lang, str] = {
     "en": "UTC+3 · Remote · Open to relocation · English C1 · Russian native · Spanish B1",
     "ru": "UTC+3 · Удалённо · Готов к переезду · Английский C1 · Русский родной · Испанский B1",
@@ -178,8 +184,10 @@ def _flowables(draft: ResumeDraft, fb: FactBase, contacts: Contacts, lang: Lang)
         Paragraph(_inline(draft.headline), s["headline"]),
         Spacer(1, 2),
         Paragraph(
-            f'{_esc(contacts.email)} | <link href="{_esc(contacts.linkedin)}" {link}>LinkedIn</link> | '
-            f'<link href="{_esc(contacts.telegram)}" {link}>Telegram</link>',
+            " | ".join(
+                [_esc(contacts.email)]
+                + [f'<link href="{_esc(url)}" {link}>{label}</link>' for label, url in contact_links(contacts)]
+            ),
             s["contacts"],
         ),
         Paragraph(_esc(contacts.location_line), s["contacts"]),
@@ -313,7 +321,7 @@ def to_markdown(draft: ResumeDraft, fb: FactBase, contacts: Contacts, lang: Lang
         f"# {NAME[lang]}",
         f"**{draft.headline}**",
         contacts.location_line,
-        f"{contacts.email} | [LinkedIn]({contacts.linkedin}) | [Telegram]({contacts.telegram})",
+        " | ".join([contacts.email] + [f"[{label}]({url})" for label, url in contact_links(contacts)]),
         "",
         f"## {titles['summary']}",
     ]

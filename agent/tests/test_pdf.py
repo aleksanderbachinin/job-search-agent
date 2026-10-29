@@ -236,3 +236,17 @@ def test_markdown_keeps_fact_ids(fb):
     assert "<!-- SKILL-2 -->" in md
     assert "Jan 2024 – Aug 2025" in md  # даты места работы из файла опыта
     assert "MPSTATS" in md and SHORT_DRAFT.headline in md
+
+
+def test_telegram_is_optional_in_pdf_and_markdown(fb):
+    no_tg = Contacts(email=CONTACTS.email, linkedin=CONTACTS.linkedin, telegram="", location_line=LOCATION_LINE["en"])
+    with_tg, _ = render_pdf(SHORT_DRAFT, fb, CONTACTS, "en")
+    without_tg, _ = render_pdf(SHORT_DRAFT, fb, no_tg, "en")
+    # Ссылки в PDF — аннотации /URI: без Telegram остаётся только LinkedIn, пустой ссылки нет.
+    assert b"t.me/example" in with_tg and b"linkedin.com/in/example" in with_tg
+    assert b"linkedin.com/in/example" in without_tg
+    assert without_tg.count(b"/URI") * 2 == with_tg.count(b"/URI") and b"/URI ()" not in without_tg
+    md = to_markdown(SHORT_DRAFT, fb, no_tg, "en")
+    assert "Telegram" not in md
+    assert f"{CONTACTS.email} | [LinkedIn]({CONTACTS.linkedin})\n" in md
+    assert "[Telegram](https://t.me/example)" in to_markdown(SHORT_DRAFT, fb, CONTACTS, "en")

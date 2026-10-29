@@ -17,7 +17,6 @@ import argparse
 import asyncio
 import json
 import re
-from dataclasses import replace
 from html import unescape
 from pathlib import Path
 from typing import Any
@@ -30,8 +29,7 @@ from .config import AGENT_DIR, Settings
 from .hirify import HirifyClient
 from .main import make_package_builder
 from .package_bot import render_summary
-from .package_store import _private_dir, _write, _write_text, map_to_markdown
-from .pdf import LOCATION_LINE, to_markdown
+from .package_store import write_files
 from .pricing import usage_cost
 from .research import LinkedInResearch, skip_reason
 from .scoring import Scorer
@@ -167,12 +165,7 @@ async def cmd_package(
     v = package_eval.vacancy_from_detail(await read_detail(s, vacancy_id, file))
     built, usages = await builder.build(v)
     out = out or PACKAGES_OUT / v.slug
-    _private_dir(out)
-    contacts = replace(builder.contacts, location_line=LOCATION_LINE[built.lang])
-    _write(out / built.filename, built.pdf)
-    _write_text(out / "resume.md", to_markdown(built.resume, builder.fb, contacts, built.lang))
-    _write_text(out / "letter.md", built.letter_text)
-    _write_text(out / "experience_map.md", map_to_markdown(built.req_map))
+    write_files(out, built, builder.fb, builder.contacts)
     costs = [usage_cost(u) for _, u in usages]
     print(f"Пакет {v.slug}: язык {built.lang}, тип {built.role_type}, страниц {package_eval.pdf_pages(built.pdf)}")
     print(render_summary(built) or "Проверка: замечаний нет")

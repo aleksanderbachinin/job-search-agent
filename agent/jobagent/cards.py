@@ -209,6 +209,14 @@ def _pct(part: int, whole: int) -> str:
     return f" ({part * 100 // whole}%)" if whole else ""
 
 
+TOKEN_LABELS = {
+    "input_tokens": "ввод",
+    "output_tokens": "вывод",
+    "cache_read_tokens": "кеш чтение",
+    "cache_write_tokens": "кеш запись",
+}
+
+
 def render_packages(counts: dict[str, int], package_usage: list[dict[str, Any]]) -> str | None:
     """Строка о пакетах отклика: собрано, переделок, средняя стоимость собранного пакета.
 
@@ -221,11 +229,16 @@ def render_packages(counts: dict[str, int], package_usage: list[dict[str, Any]])
         return None
     costs = [usage_cost(u) for u in package_usage]
     total = sum(c for c in costs if c is not None)
+    unpriced = [u for u, c in zip(package_usage, costs) if c is None]
     line = f"Пакеты: {ready} собрано, {redo} переделок"
     line += f", средняя стоимость ${total / ready:.2f}" if ready else f", потрачено ${total:.2f}"
-    unknown = sorted({u.get("model") or "?" for u, c in zip(package_usage, costs) if c is None})
-    if unknown:
-        line += ", цены нет для: " + ", ".join(escape(m) for m in unknown)
+    if unpriced:
+        # Модель задана переменной окружения, а в PRICES её нет: её затраты видны токенами.
+        models = ", ".join(escape(m) for m in sorted({u.get("model") or "?" for u in unpriced}))
+        tokens = {k: sum(u.get(k) or 0 for u in unpriced) for k in TOKEN_LABELS}
+        line += f" без {models}; токены без цены: " + ", ".join(
+            f"{label} {tokens[k]}" for k, label in TOKEN_LABELS.items()
+        )
     return line
 
 

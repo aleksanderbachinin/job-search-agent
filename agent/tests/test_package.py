@@ -619,3 +619,48 @@ async def test_cli_package_needs_candidate_contacts(fb_dir, tmp_path):
     write_fixture(tmp_path, "v.json", 9100005)
     with pytest.raises(SystemExit, match="CANDIDATE_EMAIL"):
         await cli.cmd_package(Settings(knowledge_dir=fb_dir), 0, tmp_path / "v.json", tmp_path / "out")
+
+
+class RaisingBuilder:
+    """Сборщик, который падает не PackageError: так выглядит ошибка вёрстки или баг в коде."""
+
+    map_model, gen_model, check_model = MAP_MODEL, GEN_MODEL, CHECK_MODEL
+
+    def __init__(self):
+        self.calls = 0
+
+    async def build(self, v, feedback=None, previous=None):
+        self.calls += 1
+        raise ValueError("текст, которого не должно быть в отчёте")
+
+
+async def test_package_eval_survives_bad_fixture_and_unexpected_error(tmp_path):
+    from jobagent import package_eval
+
+    fixtures = tmp_path / "fixtures"
+    fixtures.mkdir()
+    (fixtures / "a_broken_json.json").write_text("{not json", encoding="utf-8")
+    (fixtures / "b_no_slug.json").write_text(json.dumps({"title": "PM"}), encoding="utf-8")
+    write_fixture(fixtures, "c_ok.json", 9100006)
+    b = RaisingBuilder()
+
+    run = await package_eval.run(fixtures, b, out_dir=tmp_path / "evals")
+
+    assert [(i["fixture"], i["error"]) for i in run["items"]] == [
+        ("a_broken_json", "error:JSONDecodeError"),
+        ("b_no_slug", "error:KeyError"),
+        ("c_ok", "error:ValueError"),
+    ]
+    assert b.calls == 1
+    assert run["summary"]["errors"] == 3 and run["summary"]["packages"] == 0
+    # Отчёт сохранён, хотя ни одна вакансия не собралась; текста исключения в нём нет.
+    saved = run["path"].read_text(encoding="utf-8")
+    assert "не должно быть" not in saved and "не должно быть" not in package_eval.render_report(run)
+
+
+def test_render_letter_without_telegram():
+    from jobagent.package_models import LetterDraft
+
+    draft = LetterDraft(subject=None, salutation="Hi,", sentences=[], closing="")
+    text = render_letter(draft, Contacts("a@example.com", "https://www.linkedin.com/in/x/", "", ""), "en")
+    assert text.endswith("Alexander Bachinin\na@example.com | https://www.linkedin.com/in/x/")

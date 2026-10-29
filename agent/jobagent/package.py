@@ -184,7 +184,7 @@ def render_letter(draft: LetterDraft, contacts: Contacts, lang: Lang) -> str:
     if draft.closing.strip():
         blocks.append(draft.closing.strip())
     blocks.append("\n".join([
-        SIGNOFF[lang], NAME[lang], f"{contacts.email} | {contacts.linkedin} | {contacts.telegram}",
+        SIGNOFF[lang], NAME[lang], " | ".join(x for x in (contacts.email, contacts.linkedin, contacts.telegram) if x),
     ]))
     return "\n\n".join(blocks)
 

@@ -12,7 +12,7 @@ from jobagent.factcheck import Violation
 from jobagent.package import BuiltPackage
 from jobagent.package_models import Claim, Job, LetterDraft, LetterSentence, Requirement, RequirementMap, ResumeDraft
 from jobagent.package_store import PackageStore
-from jobagent.pdf import Contacts
+from jobagent.pdf import LOCATION_LINE, Contacts
 
 EXPERIENCE = AGENT_DIR.parent / "experience" / "Bachinin_Alexander_Experience.md"
 SLUG = "1071419-ai-product-builder-acme"
@@ -110,7 +110,10 @@ async def test_save_and_load_roundtrip(db, store):
     }
     assert (path / "feedback.txt").read_text(encoding="utf-8") == f"make it shorter, {FEEDBACK_WORD}"
     assert (path / "letter.md").read_text(encoding="utf-8") == original.letter_text
-    assert "<!-- MPS-1 -->" in (path / "resume.md").read_text(encoding="utf-8")
+    resume_md = (path / "resume.md").read_text(encoding="utf-8")
+    assert "<!-- MPS-1 -->" in resume_md
+    # Строка места и языков — по языку пакета, как в PDF, а не из контактов хранилища.
+    assert LOCATION_LINE[original.lang] in resume_md.splitlines()
     row = await db.get_package(SLUG, v)
     assert row["status"] == "ready"
     assert row["path"] == str(path)
