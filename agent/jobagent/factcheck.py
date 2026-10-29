@@ -325,12 +325,12 @@ def _without_facts(text: str, path: str, fb: FactBase, names: frozenset[str]) ->
     """Тема и финал письма — утверждения без номеров фактов. Число, слово словаря или название,
     кроме компании и роли из вакансии, в них не из чего подтвердить: no_facts.
 
-    Тема не предложение: её первое слово тоже проверяется как название («Netflix alumnus for …»)."""
+    Первое слово темы, как и начало предложения, названием не считается: обычное «Your …»
+    иначе гнало бы пересборку Opus. Выдуманное название в начале темы ловит проверка смысла."""
     allowed = names | _COMMON_CAPITALIZED
     numbers = sorted(extract_numbers(text))
-    candidates = unknown_terms(text, fb.vocabulary, skip_sentence_start=path != "letter.subject")
     found = sorted((extract_names(text, fb.vocabulary) - allowed) | {
-        t for t in candidates if t.lower() not in allowed
+        t for t in unknown_terms(text, fb.vocabulary) if t.lower() not in allowed
     })
     if not numbers and not found:
         return []
