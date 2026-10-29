@@ -111,6 +111,7 @@ class PackageStore:
                 "filename": built.filename,
                 "cut_steps": built.cut_steps,
                 "removed": [asdict(v) for v in built.removed],
+                "job_employers": built.job_employers,
                 "warnings": built.warnings,
                 "letter": built.letter.model_dump(),
             },
@@ -151,4 +152,5 @@ class PackageStore:
             removed=[Violation(**v) for v in check["removed"]],
             warnings=check["warnings"],
             cut_steps=check["cut_steps"],
+            job_employers=check.get("job_employers", []),
         )

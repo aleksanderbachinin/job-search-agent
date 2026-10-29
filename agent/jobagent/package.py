@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -190,6 +190,9 @@ class BuiltPackage:
     removed: list[Violation]
     warnings: list[str]
     cut_steps: list[str]
+    # Коды мест работы проверенного черновика по порядку: пути jobs[i] в removed указывают на них,
+    # даже если место потом убрано целиком.
+    job_employers: list[str] = field(default_factory=list)
 
 
 def render_letter(draft: LetterDraft, contacts: Contacts, lang: Lang) -> str:
@@ -548,6 +551,7 @@ class PackageBuilder:
             violations, u = await self._check(ctx, resume, letter, warnings)
             usage.append(("package_check", u))
 
+        job_employers = [job.employer for job in resume.jobs]
         resume, letter, removed, left = self._apply(resume, letter, violations, ctx)
         warnings += left
 
@@ -572,6 +576,7 @@ class PackageBuilder:
             removed=removed,
             warnings=warnings,
             cut_steps=cut_steps,
+            job_employers=job_employers,
         )
 
     def _apply(

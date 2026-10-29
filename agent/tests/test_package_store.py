@@ -84,6 +84,7 @@ def built() -> BuiltPackage:
         removed=[Violation(path="jobs[0].bullets[1]", code="unknown_fact", detail=f"GPTS-99 {DETAIL_WORD}")],
         warnings=[f"⚠️ проверь: stop phrase {WARNING_WORD}"],
         cut_steps=["drop:AIC"],
+        job_employers=["MPS"],
     )
 
 

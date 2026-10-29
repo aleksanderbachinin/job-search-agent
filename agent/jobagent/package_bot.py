@@ -3,13 +3,15 @@
 Сборка идёт в фоне, одна на весь сервис. Результат приходит ответом на карточку вакансии:
 PDF документом, письмо отдельным сообщением, сводка проверки, если есть что сказать.
 В логи и события идут только коды, номера версий и длины: ни текста вакансии, ни резюме,
-ни письма, ни правки Александра, ни предупреждений.
+ни письма, ни правки Александра, ни предупреждений. Сводка в Telegram — приватный канал
+Александра: в ней место по-человечески и подробности нарушений.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import asdict
 
 import anthropic
@@ -27,6 +29,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from .db import Database, Vacancy
 from .package import BuiltPackage, PackageBuilder
 from .package_store import PackageStore
+from .package_rules import EMPLOYER_NAMES
 from .pdf import PackageError
 from .scoring import Usage
 
@@ -37,6 +40,7 @@ TEXT_LIMIT = 4096
 
 STARTED = "Собираю пакет, это займёт пару минут"
 BUSY = "Уже собираю"
+BUSY_OTHER = "Собираю пакет для другой вакансии, нажми после него"
 NOT_SHOWN = "Пакет собираю только для новых карточек"
 NO_DETAIL = "Не соберу: нет полного текста вакансии"
 
@@ -54,9 +58,46 @@ def split_text(text: str, limit: int = TEXT_LIMIT) -> list[str]:
     return parts
 
 
+# Коды, у которых detail говорит, что именно не так: число, название, шаблон, причина.
+_DETAIL_CODES = frozenset({"number", "term", "unknown_term", "forbidden", "semantic"})
+_PATH = re.compile(r"(?P<part>jobs|summary|skills|letter)\[(?P<i>\d+)\](?:\.bullets\[(?P<j>\d+)\])?$")
+_LETTER_PARTS = {"letter.subject": "письмо, тема", "letter.closing": "письмо, финал", "letter": "письмо"}
+
+
+def _where(path: str, built: BuiltPackage) -> str:
+    """Место нарушения по-человечески: «MPSTATS, пункт 2», «summary, фраза 1», «письмо, финал»."""
+    if path in _LETTER_PARTS:
+        return _LETTER_PARTS[path]
+    m = _PATH.match(path)
+    if m is None:
+        return path
+    i = int(m["i"])
+    if m["part"] == "summary":
+        return f"summary, фраза {i + 1}"
+    if m["part"] == "skills":
+        return f"навыки, пункт {i + 1}"
+    if m["part"] == "letter":
+        return f"письмо, предложение {i + 1}"
+    # Пути jobs[i] — по черновику до удалений; у пакета, сохранённого раньше, — по итоговому резюме.
+    if i < len(built.job_employers):
+        code = built.job_employers[i]
+    elif i < len(built.resume.jobs):
+        code = built.resume.jobs[i].employer
+    else:
+        return path
+    name = EMPLOYER_NAMES.get(code, code)
+    return f"{name}, пункт {int(m['j']) + 1}" if m["j"] is not None else name
+
+
 def render_summary(built: BuiltPackage) -> str:
-    """Сводка проверки для Александра: что убрано, что проверить, что сокращено под страницу."""
-    lines = [f"убрал: {x.path} ({x.code})" for x in built.removed]
+    """Сводка проверки для Александра: что убрано, что проверить, что сокращено под страницу.
+
+    Только для Telegram и консоли: в логи и события сводка не идёт."""
+    lines = [
+        f"убрал: {_where(x.path, built)} ({x.code}"
+        + (f": {x.detail}" if x.code in _DETAIL_CODES and x.detail else "") + ")"
+        for x in built.removed
+    ]
     lines += built.warnings
     if built.cut_steps:
         lines.append("сократил под страницу: " + ", ".join(built.cut_steps))
@@ -79,6 +120,7 @@ class PackageRunner:
         self.builder = builder
         self.owner_id = owner_id
         self.lock = asyncio.Lock()
+        self.building: str | None = None  # slug вакансии, пакет которой сейчас собирается
         # message_id запроса правки (ForceReply) → (slug, версия). В памяти: перезапуск его забывает.
         self.pending_redo: dict[int, tuple[str, int]] = {}
         self.tasks: set[asyncio.Task] = set()  # сильные ссылки, чтобы задачу не собрал сборщик мусора
@@ -91,8 +133,9 @@ class PackageRunner:
             return NO_DETAIL
         # Проверка и захват без await между ними: два быстрых нажатия дают одну сборку.
         if self.lock.locked():
-            return BUSY
+            return BUSY if self.building == v.slug else BUSY_OTHER
         await self.lock.acquire()  # свободный замок берётся сразу, без переключения задач
+        self.building = v.slug
         try:
             version = await self.store.start(v.slug)
             if feedback is None:
@@ -102,6 +145,7 @@ class PackageRunner:
                     "package_redo", v.slug, version=version, base_version=base_version, feedback_len=len(feedback)
                 )
         except BaseException:
+            self.building = None
             self.lock.release()
             raise
         task = asyncio.create_task(self._run(v, version, feedback, base_version), name=f"package:{v.slug}")
@@ -112,11 +156,27 @@ class PackageRunner:
     async def _run(self, v: Vacancy, version: int, feedback: str | None, base_version: int | None) -> None:
         try:
             if built := await self._build(v, version, feedback, base_version):
-                await self._send(v, version, built)
+                try:
+                    await self._send(v, version, built)
+                except Exception as err:  # пакет сохранён, но до Александра не дошёл
+                    log.warning("пакет %s v%d: не отправлен (%s)", v.slug, version, type(err).__name__)
+                    await self._notify_unsent(v, version, err)
         except Exception as err:  # фоновая задача не должна падать молча и не пишет текст ошибки
-            log.warning("пакет %s v%d: не отправлен (%s)", v.slug, version, type(err).__name__)
+            log.warning("пакет %s v%d: сбой (%s)", v.slug, version, type(err).__name__)
         finally:
+            self.building = None
             self.lock.release()
+
+    async def _notify_unsent(self, v: Vacancy, version: int, err: Exception) -> None:
+        """Простое сообщение без ответа на карточку: отправка ответом могла и сломаться."""
+        text = (
+            f"Пакет v{version} собран, но не отправлен: {type(err).__name__}. "
+            "Нажми «Подготовить отклик» ещё раз или возьми файлы через `cli`."
+        )
+        try:
+            await self.bot.send_message(self.owner_id, text, parse_mode=None)
+        except Exception as notify_err:
+            log.warning("пакет %s v%d: не отправил и сообщение о сбое (%s)", v.slug, version, type(notify_err).__name__)
 
     async def _build(
         self, v: Vacancy, version: int, feedback: str | None, base_version: int | None

@@ -246,6 +246,7 @@ async def test_build_happy_path_calls_steps_in_order(fb_dir):
     assert [u.model for _, u in usage] == [MAP_MODEL, GEN_MODEL, GEN_MODEL, CHECK_MODEL]
     assert pkg.removed == [] and pkg.warnings == [] and pkg.cut_steps == []
     assert pkg.lang == "en" and pkg.role_type == "builder"
+    assert pkg.job_employers == list(JOB_BULLETS)
     assert pkg.pdf.startswith(b"%PDF")
     assert pkg.filename == "Bachinin_Alexander_Acme_AI_Product_Builder.pdf"
     # Файл опыта с номерами и правила — один кешируемый блок, общий для резюме и письма.

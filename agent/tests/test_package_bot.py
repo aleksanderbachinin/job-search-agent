@@ -17,9 +17,10 @@ from aiogram.types import CallbackQuery, Chat, Message, Update, User
 from jobagent.bot import HELP, kb_new, make_dispatcher
 from jobagent.facts import parse_facts
 from jobagent.factcheck import Violation
-from jobagent.package_bot import PackageRunner
+from jobagent.package_bot import PackageRunner, render_summary
 from jobagent.package_store import PackageStore
 from jobagent.pdf import PackageError
+from aiogram.exceptions import TelegramNetworkError
 from jobagent.scoring import Usage
 from test_package_store import CONTACTS, DETAIL_WORD, EXPERIENCE, LETTER_WORD, RESUME_WORD, WARNING_WORD, built
 from test_bot import FakeSession
@@ -147,7 +148,7 @@ async def test_package_button_builds_and_sends(db, store, harness):
     assert letter_msg.text == pkg.letter_text.strip()
     assert letter_msg.parse_mode is None
     assert letter_msg.reply_parameters.message_id == CARD_MSG
-    assert "убрал: jobs[0].bullets[1] (unknown_fact)" in summary_msg.text
+    assert "убрал: MPSTATS, пункт 2 (unknown_fact)" in summary_msg.text
     assert pkg.warnings[0] in summary_msg.text
     assert "drop:AIC" in summary_msg.text
     assert summary_msg.parse_mode is None
@@ -373,3 +374,112 @@ async def test_redo_of_missing_version_is_refused(db, harness):
 def test_dispatcher_without_runner_has_no_package_router(db):
     dp = make_dispatcher(db, None, OWNER)
     assert len(dp.sub_routers) == 1
+
+
+# ---------- финальная волна правок: F5, F6, F7 ----------
+
+
+def test_summary_names_place_code_and_detail():
+    # F5: в Telegram — место по-человечески, код и подробности; место работы берётся из
+    # черновика до удалений, даже если оно потом убрано целиком.
+    pkg = replace(
+        built(),
+        job_employers=["VIBE", "AEZ", "MPS"],
+        removed=[
+            Violation("jobs[2].bullets[3]", "number", "35"),
+            Violation("jobs[1].bullets[0]", "unknown_term", "Kubernetes"),
+            Violation("summary[0]", "semantic", "role_inflated"),
+            Violation("skills[1]", "term", "tableau"),
+            Violation("letter[4]", "forbidden", "FORBIDDEN[2] (VIBE)"),
+            Violation("letter.closing", "no_facts", "числа: 5000000"),
+            Violation("jobs[0].bullets[1]", "unknown_fact", "VIBE-99"),
+        ],
+        warnings=[],
+        cut_steps=[],
+    )
+    lines = render_summary(pkg).splitlines()
+    assert lines == [
+        "убрал: MPSTATS, пункт 4 (number: 35)",
+        "убрал: AEZAKMI Browser, пункт 1 (unknown_term: Kubernetes)",
+        "убрал: summary, фраза 1 (semantic: role_inflated)",
+        "убрал: навыки, пункт 2 (term: tableau)",
+        "убрал: письмо, предложение 5 (forbidden: FORBIDDEN[2] (VIBE))",
+        "убрал: письмо, финал (no_facts)",
+        "убрал: i-free, пункт 2 (unknown_fact)",
+    ]
+
+
+async def add_other_vacancy(db):
+    card = {**CARD, "slug": "1071420-other", "vacancy_id": VID + 1}
+    await db.upsert_card(card, [], "webhook")
+    await db.update(card["slug"], status="shown", detail=detail(company="Beta", title=ROLE),
+                    assessment={"role": ROLE, "company": "Beta"}, tg_message_id=CARD_MSG + 1)
+
+
+async def test_press_for_other_vacancy_while_building_says_so(db, harness):
+    # F6: вторая вакансия во время сборки не теряется молча.
+    await add_vacancy(db)
+    await add_other_vacancy(db)
+    gate = asyncio.Event()
+    h = harness(FakeBuilder(gate=gate))
+    await h.press(f"pk:{VID}")
+    await h.press(f"pk:{VID + 1}")
+    await h.press(f"pk:{VID}")
+    assert h.session.answers() == [
+        "Собираю пакет, это займёт пару минут",
+        "Собираю пакет для другой вакансии, нажми после него",
+        "Уже собираю",
+    ]
+    gate.set()
+    await h.finish()
+    assert [c["slug"] for c in h.builder.calls] == [SLUG]
+    assert h.runner.building is None
+
+
+class FailingDocumentSession(FakeSession):
+    async def make_request(self, bot, method, timeout=None):
+        if isinstance(method, SendDocument):
+            self.calls.append(method)
+            raise TelegramNetworkError(method=method, message="секретный текст")
+        return await super().make_request(bot, method, timeout)
+
+
+async def test_delivery_failure_after_save_is_reported(db, harness, caplog):
+    # F7: пакет сохранён, но Telegram не принял PDF — Александр узнаёт об этом.
+    caplog.set_level(logging.DEBUG)
+    await add_vacancy(db)
+    h = harness()
+    h.session = FailingDocumentSession()
+    h.bot = Bot("123456:TESTTOKEN", session=h.session)
+    h.runner.bot = h.bot
+    await h.press(f"pk:{VID}")
+    await h.finish()
+    (msg,) = h.session.of(SendMessage)
+    assert msg.text == (
+        "Пакет v1 собран, но не отправлен: TelegramNetworkError. "
+        "Нажми «Подготовить отклик» ещё раз или возьми файлы через `cli`."
+    )
+    assert msg.parse_mode is None
+    assert (await db.get_package(SLUG, 1))["status"] == "ready"
+    assert "TelegramNetworkError" in caplog.text and "секретный текст" not in caplog.text
+    assert not h.runner.lock.locked()
+
+
+async def test_delivery_failure_notice_failing_too_is_swallowed(db, harness, caplog):
+    class AllFailing(FakeSession):
+        async def make_request(self, bot, method, timeout=None):
+            if isinstance(method, (SendDocument, SendMessage)):
+                raise TelegramNetworkError(method=method, message="секретный текст")
+            return await super().make_request(bot, method, timeout)
+
+    caplog.set_level(logging.DEBUG)
+    await add_vacancy(db)
+    h = harness()
+    h.session = AllFailing()
+    h.bot = Bot("123456:TESTTOKEN", session=h.session)
+    h.runner.bot = h.bot
+    await h.press(f"pk:{VID}")
+    await h.finish()
+    assert (await db.get_package(SLUG, 1))["status"] == "ready"
+    assert "секретный текст" not in caplog.text
+    assert not h.runner.lock.locked()
