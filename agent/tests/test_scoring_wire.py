@@ -6,7 +6,8 @@ import anthropic
 import httpx2
 import pytest
 
-from jobagent.scoring import MASTER_RESUME, Scorer
+from jobagent.config import AGENT_DIR
+from jobagent.scoring import MASTER_RESUME, Scorer, candidate_profile
 from test_service import CARD, assessment, detail
 
 TRIAGE_MODEL = "test-triage-model"
@@ -118,7 +119,7 @@ async def test_assess_request_uses_cache_fallbacks_and_knowledge(knowledge):
 
 async def test_prefilter_request_uses_triage_model_criteria_and_long_cache(knowledge):
     captured = []
-    client = make_client(captured, {"reason": "гибрид в Москве", "condition": 1}, TRIAGE_MODEL)
+    client = make_client(captured, {"reason": "гибрид в Москве", "condition": "office"}, TRIAGE_MODEL)
     scorer = Scorer(knowledge, TRIAGE_MODEL, SCORING_MODEL, client=client)
     result, usage = await scorer.prefilter(detail(), [{"id": 1, "name": "PM remote"}])
     assert result.relevant is False and usage.cache_write_tokens == 7
@@ -156,3 +157,15 @@ async def test_prefilter_lets_vacancy_through_on_refusal(knowledge):
     scorer = Scorer(knowledge, TRIAGE_MODEL, SCORING_MODEL, client=client)
     result, _ = await scorer.prefilter(detail(), [])
     assert result.relevant is True
+
+
+def test_scorer_refuses_empty_candidate_section(knowledge):
+    (knowledge / "search_criteria.md").write_text("## Критерии кандидата\n\n## Стоп-факторы\nофис", encoding="utf-8")
+    with pytest.raises(ValueError, match="Критерии кандидата"):
+        Scorer(knowledge, TRIAGE_MODEL, SCORING_MODEL, client=make_client([], {}, TRIAGE_MODEL))
+
+
+def test_real_criteria_file_has_candidate_section():
+    # Без раздела сервис не стартует: ловим это тестами до выкладки, а не на сервере.
+    profile = candidate_profile((AGENT_DIR.parent / "search_criteria.md").read_text(encoding="utf-8"))
+    assert len(profile.splitlines()) > 3

@@ -182,14 +182,14 @@ def test_haiku_writes_reason_before_verdict():
 @pytest.mark.parametrize(
     ("condition", "relevant", "reason"),
     [
-        (0, True, "формат не указан, Senior PM"),
-        (1, False, "гибрид в Москве, релокации нет (условие 1)"),
-        (4, False, "Backend-разработчик (условие 4)"),
+        ("none", True, "формат не указан, Senior PM"),
+        ("office", False, "гибрид в Москве, релокации нет (отсев: офис или гибрид без релокации)"),
+        ("not_product", False, "Backend-разработчик (отсев: не продуктовая роль)"),
     ],
 )
-async def test_prefilter_decision_follows_condition_number(condition, relevant, reason):
+async def test_prefilter_decision_follows_condition_code(condition, relevant, reason):
     # Haiku называет выполненное условие, а «хотя бы одно из четырёх» считает код.
-    raw = {"reason": reason.split(" (условие")[0], "condition": condition}
+    raw = {"reason": reason.split(" (отсев")[0], "condition": condition}
     scorer = Scorer(AGENT_DIR.parent, "claude-haiku-5-5", "claude-sonnet-5-5", client=client_returning(raw))
     result, _ = await scorer.prefilter(detail(), [])
     assert result.relevant is relevant
