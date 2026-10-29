@@ -549,17 +549,23 @@ async def test_package_eval_report_counts(fb_dir, tmp_path):
     assert invented["removed"] == {"number": 1} and invented["retried"] is True
     assert invented["calls"] == {"package_map": 1, "package_resume": 2, "package_letter": 1, "package_check": 2}
     for item in run["items"]:
-        assert item["pages"] == 1 and item["dashes"] == 0 and item["unsourced"] == 0
+        assert item["pages"] == 1 and item["dashes"] == 0 and item["recheck"] == 0
         assert item["letter_words"] > 0 and item["cost_usd"] > 0
     s = run["summary"]
     assert s["packages"] == 2 and s["errors"] == 0
-    assert s["unsourced_final"] == 0 and s["dashes"] == 0 and s["pages_over_1"] == 0
-    assert s["removed"] == {"number": 1}
+    assert s["recheck_violations"] == 0 and s["dashes"] == 0 and s["pages_over_1"] == 0
+    assert s["removed"] == {"number": 1} and s["removed_total"] == 1 and s["failed"] == {}
     assert s["cost_usd"] == pytest.approx(happy["cost_usd"] + invented["cost_usd"])
 
     report = package_eval.render_report(run)
-    assert "утверждений без источника в финале: 0" in report
+    assert "повторная проверка кодом: 0 нарушений (контроль)" in report
+    assert "без источника" not in report
     assert "тире: 0" in report and "страниц > 1: 0" in report
+    # Отчёт начинается с того, что убрано, и с того, что не собралось.
+    lines = report.splitlines()
+    assert lines[2] == "Убрано: 1 (number 1)"
+    assert lines[3] == "Не собрано: 0"
+    assert lines.index("Убрано: 1 (number 1)") < lines.index(next(x for x in lines if x.startswith("a_happy")))
     (saved,) = out_dir.glob("*-package.json")
     assert run["path"] == saved
     # В отчёте и файле только числа и коды: ни письма, ни резюме, ни вакансии.
@@ -583,6 +589,8 @@ async def test_package_eval_error_is_counted_by_code(fb_dir, tmp_path):
     (item,) = run["items"]
     assert item["error"] == "no_answer" and item["cost_usd"] > 0
     assert run["summary"]["errors"] == 1 and run["summary"]["packages"] == 0
+    assert run["summary"]["failed"] == {"no_answer": 1}
+    assert "Не собрано: 1 (no_answer 1)" in package_eval.render_report(run).splitlines()[:5]
     assert "path" not in run  # без out_dir отчёт не сохраняется
 
 

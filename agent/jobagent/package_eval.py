@@ -6,8 +6,11 @@
 
 В отчёт идут только числа и коды: сколько утверждений убрано по каким кодам, предупреждения,
 шаги подгонки под страницу, страницы, слова письма, стоимость. Ни текста вакансии, ни резюме,
-ни письма. Итог, который должен быть нулевым: утверждений без источника в финале, тире в письме,
-PDF больше одной страницы.
+ни письма. Главное в отчёте — что убрано (по кодам, всего и по вакансиям) и какие пакеты не
+собрались и с каким кодом. Контроль, который должен быть нулевым: повторная проверка кодом
+готового пакета, тире в письме, PDF больше одной страницы. Повторная проверка — те же проверки
+кодом, что уже применил сборщик: она ловит ошибку в самом удалении, а не выдумку, которую код
+пропустил.
 """
 
 from __future__ import annotations
@@ -69,8 +72,8 @@ def pdf_pages(pdf: bytes) -> int:
     return len(_PAGE_RE.findall(pdf))
 
 
-def unsourced(v: Vacancy, built: BuiltPackage, builder: PackageBuilder) -> int:
-    """Утверждения итогового пакета, которые проверка кодом по-прежнему удалила бы."""
+def recheck_violations(v: Vacancy, built: BuiltPackage, builder: PackageBuilder) -> int:
+    """Контроль: утверждения итогового пакета, которые та же проверка кодом по-прежнему удалила бы."""
     violations = check_resume(built.resume, built.req_map, builder.fb, built.lang)
     violations += check_letter(built.letter, built.req_map, builder.fb, built.lang, _company(v), _role(v))
     return len({x.path for x in violations if ON_VIOLATION[x.code] == "remove"})
@@ -102,7 +105,7 @@ def _item(name: str, vacancy_id: int | None) -> dict[str, Any]:
         "pages": None,
         "letter_words": None,
         "dashes": None,
-        "unsourced": None,
+        "recheck": None,
         "cost_usd": 0.0,
         "unpriced_models": [],
     }
@@ -142,7 +145,7 @@ async def evaluate(name: str, v: Vacancy, builder: PackageBuilder) -> dict[str, 
             pages=pdf_pages(built.pdf),
             letter_words=word_count(built.letter_text),
             dashes=len(find_dashes(built.letter_text)),
-            unsourced=unsourced(v, built, builder),
+            recheck=recheck_violations(v, built, builder),
         )
     except Exception as err:  # сбой в подсчёте — тоже код, пакет в итог не входит
         item["error"] = _error_code(err)
@@ -157,7 +160,9 @@ def summarize(items: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "packages": len(done),
         "errors": len(items) - len(done),
-        "unsourced_final": sum(i["unsourced"] for i in done),
+        "failed": dict(sorted(Counter(i["error"] for i in items if i["error"] is not None).items())),
+        "removed_total": sum(removed.values()),
+        "recheck_violations": sum(i["recheck"] for i in done),
         "dashes": sum(i["dashes"] for i in done),
         "pages_over_1": sum(1 for i in done if i["pages"] != 1),
         "removed": dict(sorted(removed.items())),
@@ -196,14 +201,20 @@ async def run(fixtures: Path, builder: PackageBuilder, out_dir: Path | None = No
 def render_report(run: dict[str, Any]) -> str:
     s = run["summary"]
     m = run["models"]
+    removed = ", ".join(f"{code} {n}" for code, n in s["removed"].items())
+    failed = ", ".join(f"{code} {n}" for code, n in s["failed"].items())
     lines = [
         f"eval package: {len(run['items'])} вакансий, модели {m['map']} / {m['gen']} / {m['check']}, "
         f"коммит {run['git_sha']}",
         "",
+        f"Убрано: {s['removed_total']}" + (f" ({removed})" if removed else ""),
+        f"Не собрано: {s['errors']}" + (f" ({failed})" if failed else ""),
+        f"Собрано: {s['packages']}, с пересборкой: {s['retried']}",
+        "",
     ]
     for i in run["items"]:
         if i["error"]:
-            lines.append(f"{i['fixture']}: ошибка {i['error']}, ${i['cost_usd']:.3f}")
+            lines.append(f"{i['fixture']}: не собран, {i['error']}, ${i['cost_usd']:.3f}")
             continue
         removed = ", ".join(f"{code} {n}" for code, n in i["removed"].items()) or "нет"
         lines.append(
@@ -211,12 +222,10 @@ def render_report(run: dict[str, Any]) -> str:
             f"пересборка {'да' if i['retried'] else 'нет'}; подгонка {', '.join(i['cut_steps']) or 'нет'}; "
             f"страниц {i['pages']}; слов в письме {i['letter_words']}; ${i['cost_usd']:.3f}"
         )
-    removed = ", ".join(f"{code} {n}" for code, n in s["removed"].items()) or "нет"
     lines += [
         "",
-        f"Собрано: {s['packages']}, ошибок: {s['errors']}, с пересборкой: {s['retried']}",
-        f"Убрано по кодам: {removed}",
-        f"утверждений без источника в финале: {s['unsourced_final']}",
+        "Контроль, всё должно быть 0:",
+        f"повторная проверка кодом: {s['recheck_violations']} нарушений (контроль)",
         f"тире: {s['dashes']}",
         f"страниц > 1: {s['pages_over_1']}",
         f"Стоимость: ${s['cost_usd']:.2f}"
