@@ -115,7 +115,9 @@ def test_bullet_limits_boundaries():
 
 
 def test_cut_order():
-    assert CUT_ORDER == ("trim:SKK", "trim:STR", "trim_long", "drop:AIC", "drop:VERDA", "drop:SKK")
+    assert CUT_ORDER == (
+        "trim:SKK", "trim:STR", "trim_long", "drop:AIC", "drop:VERDA", "drop:SKK", "trim_skills", "trim_summary",
+    )
 
 
 # ---------- запрещённые формулировки ----------

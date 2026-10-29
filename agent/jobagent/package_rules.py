@@ -56,7 +56,13 @@ def bullet_limits(position: int) -> tuple[int, int]:
 # Шаги подгонки резюме под одну страницу, по порядку. Шаг для места, которого нет в черновике,
 # пропускается. Места из REQUIRED не убираются никогда. drop:AIC и drop:VERDA срабатывают
 # только в growth: в других типах этих мест нет (решение Александра 2026-10-28).
-CUT_ORDER: tuple[str, ...] = ("trim:SKK", "trim:STR", "trim_long", "drop:AIC", "drop:VERDA", "drop:SKK")
+# trim_skills и trim_summary — запас на случай, когда мест работы резать уже нечего: по одному
+# последнему пункту навыков, затем фразе summary, пока их больше минимума.
+CUT_ORDER: tuple[str, ...] = (
+    "trim:SKK", "trim:STR", "trim_long", "drop:AIC", "drop:VERDA", "drop:SKK", "trim_skills", "trim_summary",
+)
+MIN_SKILLS = 3
+MIN_SUMMARY = 2
 
 # Формулировки из раздела «Не засчитывать» файла опыта, по шаблону (минимум) на пункт.
 # Первый элемент пары — код места работы, к которому привязан шаблон (проверяется только в его

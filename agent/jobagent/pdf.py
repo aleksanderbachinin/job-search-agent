@@ -23,7 +23,14 @@ from reportlab.platypus import HRFlowable, Paragraph, SimpleDocTemplate, Spacer,
 
 from jobagent.facts import FactBase
 from jobagent.package_models import Claim, Job, Lang, ResumeDraft, RoleType
-from jobagent.package_rules import CUT_ORDER, EMPLOYER_NAMES, EMPLOYER_NAMES_EN, REQUIRED
+from jobagent.package_rules import (
+    CUT_ORDER,
+    EMPLOYER_NAMES,
+    EMPLOYER_NAMES_EN,
+    MIN_SKILLS,
+    MIN_SUMMARY,
+    REQUIRED,
+)
 
 
 class PackageError(RuntimeError):
@@ -269,6 +276,10 @@ def _trim_long_steps(draft: ResumeDraft):
             yield f"trim_long:{job.employer}", i
 
 
+# Шаги, которые убирают последний пункт раздела, пока пунктов больше минимума: шаг → (поле, минимум).
+_TAIL_CUTS: dict[str, tuple[str, int]] = {"trim_skills": ("skills", MIN_SKILLS), "trim_summary": ("summary", MIN_SUMMARY)}
+
+
 def fit_one_page(
     draft: ResumeDraft, fb: FactBase, contacts: Contacts, lang: Lang, role_type: RoleType
 ) -> tuple[ResumeDraft, bytes, list[str]]:
@@ -301,6 +312,12 @@ def fit_one_page(
             cut = _drop(draft, code, role_type)
             if cut is not None:
                 draft, steps = cut, steps + [step]
+                pdf, pages = render_pdf(draft, fb, contacts, lang)
+        elif kind in _TAIL_CUTS:
+            field, minimum = _TAIL_CUTS[kind]
+            while pages > 1 and len(getattr(draft, field)) > minimum:
+                draft = draft.model_copy(update={field: getattr(draft, field)[:-1]})
+                steps.append(kind)
                 pdf, pages = render_pdf(draft, fb, contacts, lang)
     if pages > 1:
         raise PackageError("не помещается на страницу", code="does_not_fit")

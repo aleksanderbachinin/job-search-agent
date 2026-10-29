@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
@@ -29,6 +30,9 @@ from .package_rules import COMPOSITION, EMPLOYER_NAMES, NESTING, NESTING_ROLE_TY
 from .pdf import LOCATION_LINE, NAME, Contacts, PackageError, fit_one_page
 from .scoring import CACHE_1H, EXPERIENCE_DIR, MASTER_RESUME, Usage, vacancy_for_prompt
 from .textchecks import pdf_filename, replace_dashes, vacancy_language
+
+# Колбэк шагов сборки для статуса в боте: map, resume, letter, check, retry, pdf.
+Progress = Callable[[str], Awaitable[None]]
 
 log = logging.getLogger(__name__)
 
@@ -101,6 +105,10 @@ RESUME_INSTRUCTIONS = f"""Ты пишешь резюме кандидата по
 - Места работы: только состав для типа вакансии, в его порядке, обязательные всегда.
   employer — код места работы, title — одна из должностей этого места из правил.
 - Пунктов: от 3 до 4 у первых трёх мест работы, 1 или 2 у остальных.
+- Резюме должно уместиться на одну страницу A4: summary из 2 или 3 коротких фраз, навыков 3 или 4
+  строки, пункт места работы не длиннее двух строк (около 150 символов). Что не влезет, код
+  срежет сам: сначала пункты младших мест, затем последние строки навыков и summary, поэтому
+  самое важное ставь первым.
 - headline — ровно одно из разрешённых позиционирований.
 - Весь текст на языке из запроса; названия инструментов как в файле опыта.
 - Без длинных и средних тире.
@@ -495,19 +503,35 @@ class PackageBuilder:
     # ---------- сборка ----------
 
     async def build(
-        self, v: Vacancy, feedback: str | None = None, previous: BuiltPackage | None = None
+        self,
+        v: Vacancy,
+        feedback: str | None = None,
+        previous: BuiltPackage | None = None,
+        progress: Progress | None = None,
     ) -> tuple[BuiltPackage, list[tuple[str, Usage]]]:
-        """Собирает пакет. При PackageError затраты уже сделанных вызовов лежат в err.usages."""
+        """Собирает пакет. При PackageError затраты уже сделанных вызовов лежат в err.usages.
+
+        progress, если задан, вызывается перед каждым шагом с его кодом."""
         usage: list[tuple[str, Usage]] = []
+
+        async def step(name: str) -> None:
+            if progress is not None:
+                await progress(name)
+
         try:
-            return await self._build(v, feedback, previous, usage), usage
+            return await self._build(v, feedback, previous, usage, step), usage
         except PackageError as err:
             # Затраты вызова, на котором сборка упала, приходят в самом исключении.
             err.usages = usage + err.usages
             raise
 
     async def _build(
-        self, v: Vacancy, feedback: str | None, previous: BuiltPackage | None, usage: list[tuple[str, Usage]]
+        self,
+        v: Vacancy,
+        feedback: str | None,
+        previous: BuiltPackage | None,
+        usage: list[tuple[str, Usage]],
+        step: Progress,
     ) -> BuiltPackage:
         """Сборка; затраты каждого вызова дописываются в usage сразу после ответа."""
         if not v.detail:
@@ -520,6 +544,7 @@ class PackageBuilder:
         if previous is not None:
             req_map = previous.req_map
         else:
+            await step("map")
             req_map, u = await self._map(v, vacancy)
             usage.append(("package_map", u))
         ctx = _Context(
@@ -527,10 +552,13 @@ class PackageBuilder:
             vacancy=vacancy, req_map=req_map, feedback=feedback, previous=previous,
         )
 
+        await step("resume")
         resume, u = await self._resume(ctx)
         usage.append(("package_resume", u))
+        await step("letter")
         letter, u = await self._letter(ctx, resume)
         usage.append(("package_letter", u))
+        await step("check")
         violations, u = await self._check(ctx, resume, letter, warnings)
         usage.append(("package_check", u))
 
@@ -541,6 +569,7 @@ class PackageBuilder:
         retry_letter = any(_needs_retry(x) for x in letter_v)
         if retry_resume or retry_letter:
             log.info("пакет %s: пересборка, нарушения %s", v.slug, ", ".join(sorted({x.code for x in violations})))
+            await step("retry")
             if retry_resume:
                 resume, u = await self._resume(ctx, (resume, resume_v))
                 usage.append(("package_resume", u))
@@ -556,6 +585,7 @@ class PackageBuilder:
         warnings += left
 
         contacts = replace(self.contacts, location_line=LOCATION_LINE[lang])
+        await step("pdf")
         # Вёрстка reportlab синхронная и долгая: в потоке, чтобы не держать бота и вебхуки.
         resume, pdf, cut_steps = await asyncio.to_thread(
             fit_one_page, resume, self.fb, contacts, lang, req_map.role_type

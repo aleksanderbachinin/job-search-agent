@@ -250,3 +250,17 @@ def test_telegram_is_optional_in_pdf_and_markdown(fb):
     assert "Telegram" not in md
     assert f"{CONTACTS.email} | [LinkedIn]({CONTACTS.linkedin})\n" in md
     assert "[Telegram](https://t.me/example)" in to_markdown(SHORT_DRAFT, fb, CONTACTS, "en")
+
+
+def test_long_summary_and_skills_are_trimmed_after_employers(fb):
+    # Как черновик Aiphoria: места работы уже ужаты до предела, а summary и навыки длинные.
+    sentence = c("Product manager who owns problems end to end and builds hands-on with AI tools every day. " * 2, "MPS-1")
+    skill = c("**AI building:** Claude Code, agentic coding, prompt design, agent workflows, LLM benchmarking", "SKILL-2")
+    heavy = draft([("VIBE", 3), ("GPTS", 3), ("MPS", 3), ("STR", 1), ("AEZ", 2)]).model_copy(
+        update={"summary": [sentence] * 6, "skills": [skill] * 10}
+    )
+    fitted, pdf, steps = fit_one_page(heavy, fb, CONTACTS, "en", "product")
+    assert pdf_pages(pdf) == 1
+    assert "trim_skills" in steps and all(s in ("trim_skills", "trim_summary") for s in steps)
+    assert len(fitted.skills) >= 3 and len(fitted.summary) >= 2
+    assert [len(j.bullets) for j in fitted.jobs] == [3, 3, 3, 1, 2]

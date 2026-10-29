@@ -1,7 +1,9 @@
 """Пакет отклика в боте: кнопки «📝 Подготовить отклик» и «✏️ Переделать».
 
-Сборка идёт в фоне, одна на весь сервис. Результат приходит ответом на карточку вакансии:
-PDF документом, письмо отдельным сообщением, сводка проверки, если есть что сказать.
+Сборка идёт в фоне, одна на весь сервис. Пока она идёт, ответом на карточку висит статус:
+одно сообщение, которое правится по шагам и в конце показывает итог (готов, не собрался, прерван).
+Результат приходит ответом на карточку вакансии: PDF документом, письмо отдельным сообщением,
+сводка проверки, если есть что сказать.
 В логи и события идут только коды, номера версий и длины: ни текста вакансии, ни резюме,
 ни письма, ни правки Александра, ни предупреждений. Сводка в Telegram — приватный канал
 Александра: в ней место по-человечески и подробности нарушений.
@@ -12,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from dataclasses import asdict
 
 import anthropic
@@ -43,6 +46,101 @@ BUSY = "Уже собираю"
 BUSY_OTHER = "Собираю пакет для другой вакансии, нажми после него"
 NOT_SHOWN = "Пакет собираю только для новых карточек"
 NO_DETAIL = "Не соберу: нет полного текста вакансии"
+
+# Шаги сборки в статусе. retry показывается, только если пересборка была; map — только у новой версии.
+STAGE_LABELS = {
+    "map": "карта требований",
+    "resume": "резюме",
+    "letter": "сопроводительное письмо",
+    "check": "проверка фактов",
+    "retry": "пересборка по замечаниям проверки",
+    "pdf": "PDF на одну страницу",
+    "send": "сохранение и отправка",
+}
+STATUS_TITLE_LIMIT = 200
+STATUS_EDIT_TIMEOUT = 5.0  # при остановке сервиса итог правится не дольше этого
+
+
+def _elapsed(seconds: float) -> str:
+    m, s = divmod(int(seconds), 60)
+    return f"{m}:{s:02d}"
+
+
+class BuildStatus:
+    """Статус сборки в чате: одно сообщение ответом на карточку, правится на каждом шаге и в конце.
+
+    Сбои Telegram здесь не мешают сборке: статус — для глаз, в журнал идёт только тип ошибки."""
+
+    def __init__(self, bot: Bot, chat_id: int, v: Vacancy, version: int, base_version: int | None):
+        self.bot = bot
+        self.chat_id = chat_id
+        self.slug = v.slug
+        self.version = version
+        self.base_version = base_version
+        role = (v.assessment or {}).get("role") or v.title
+        company = v.company or (v.assessment or {}).get("company")
+        self.title = " · ".join(x for x in (role, company) if x)[:STATUS_TITLE_LIMIT]
+        self.stages = [x for x in STAGE_LABELS if x != "retry" and not (x == "map" and base_version is not None)]
+        self.current: str | None = None
+        self.started = time.monotonic()
+        self.message_id: int | None = None
+
+    def render(self, head: str, failed: bool = False) -> str:
+        """Заголовок, вакансия и шаги: ✓ сделан, ▸ идёт (✗ на нём упало), · впереди."""
+        lines = [f"{head} · {_elapsed(time.monotonic() - self.started)}", self.title, ""]
+        at = self.stages.index(self.current) if self.current in self.stages else -1
+        for i, stage in enumerate(self.stages):
+            if failed and i > at:
+                break
+            mark = "✓" if i < at else ("✗" if failed else "▸") if i == at else "·"
+            lines.append(f"{mark} {STAGE_LABELS[stage]}")
+        return "\n".join(lines).rstrip()
+
+    def _progress_head(self) -> str:
+        head = f"⏳ Готовлю отклик v{self.version}"
+        return head + (f" по правке v{self.base_version}" if self.base_version is not None else "")
+
+    async def open(self, reply: ReplyParameters | None) -> None:
+        try:
+            msg = await self.bot.send_message(
+                self.chat_id, self.render(self._progress_head()), parse_mode=None, reply_parameters=reply
+            )
+            self.message_id = msg.message_id
+        except Exception as err:
+            log.warning("пакет %s v%d: статус не отправлен (%s)", self.slug, self.version, type(err).__name__)
+
+    async def stage(self, name: str) -> None:
+        if name == "retry" and "retry" not in self.stages:
+            self.stages.insert(self.stages.index("check") + 1, "retry")
+        self.current = name
+        await self._edit(self.render(self._progress_head()))
+
+    async def done(self) -> None:
+        await self._edit(f"✅ Отклик v{self.version} готов · {_elapsed(time.monotonic() - self.started)}\n{self.title}")
+
+    async def failed(self, code: str) -> None:
+        await self._edit(self.render(f"❌ Отклик v{self.version} не собрался: {code}", failed=True))
+
+    async def unsent(self, err: Exception) -> None:
+        await self._edit(
+            f"⚠️ Отклик v{self.version} собран, но не отправлен: {type(err).__name__}\n{self.title}"
+        )
+
+    async def interrupted(self) -> None:
+        """Сервис останавливается: итог правится с таймаутом, чтобы не держать остановку."""
+        text = f"⛔ Сборка v{self.version} прервана перезапуском сервиса, нажми ещё раз\n{self.title}"
+        try:
+            await asyncio.wait_for(self._edit(text), STATUS_EDIT_TIMEOUT)
+        except Exception:
+            pass
+
+    async def _edit(self, text: str) -> None:
+        if self.message_id is None:
+            return
+        try:
+            await self.bot.edit_message_text(text, chat_id=self.chat_id, message_id=self.message_id, parse_mode=None)
+        except Exception as err:
+            log.warning("пакет %s v%d: статус не обновлён (%s)", self.slug, self.version, type(err).__name__)
 
 
 def split_text(text: str, limit: int = TEXT_LIMIT) -> list[str]:
@@ -154,13 +252,21 @@ class PackageRunner:
         return STARTED
 
     async def _run(self, v: Vacancy, version: int, feedback: str | None, base_version: int | None) -> None:
+        status = BuildStatus(self.bot, self.owner_id, v, version, base_version)
         try:
-            if built := await self._build(v, version, feedback, base_version):
+            await status.open(self._reply(v))
+            if built := await self._build(v, version, feedback, base_version, status):
                 try:
                     await self._send(v, version, built)
                 except Exception as err:  # пакет сохранён, но до Александра не дошёл
                     log.warning("пакет %s v%d: не отправлен (%s)", v.slug, version, type(err).__name__)
+                    await status.unsent(err)
                     await self._notify_unsent(v, version, err)
+                else:
+                    await status.done()
+        except asyncio.CancelledError:  # остановка сервиса: в базе станет failed (restart) при следующем старте
+            await status.interrupted()
+            raise
         except Exception as err:  # фоновая задача не должна падать молча и не пишет текст ошибки
             log.warning("пакет %s v%d: сбой (%s)", v.slug, version, type(err).__name__)
         finally:
@@ -179,7 +285,7 @@ class PackageRunner:
             log.warning("пакет %s v%d: не отправил и сообщение о сбое (%s)", v.slug, version, type(notify_err).__name__)
 
     async def _build(
-        self, v: Vacancy, version: int, feedback: str | None, base_version: int | None
+        self, v: Vacancy, version: int, feedback: str | None, base_version: int | None, status: BuildStatus
     ) -> BuiltPackage | None:
         """Сборка и сохранение; при сбое — package_failed и сообщение с кодом, возвращает None."""
         previous = None
@@ -188,25 +294,26 @@ class PackageRunner:
                 previous = await self.store.load(v.slug, base_version)
             except Exception as err:
                 log.warning("пакет %s v%d: не прочитал v%d (%s)", v.slug, version, base_version, type(err).__name__)
-                await self._fail(v, version, "load_error")
+                await self._fail(v, version, "load_error", status)
                 return None
         try:
-            built, usages = await self.builder.build(v, feedback=feedback, previous=previous)
+            built, usages = await self.builder.build(v, feedback=feedback, previous=previous, progress=status.stage)
         except PackageError as err:
             await self._log_usages(v.slug, err.usages)
-            await self._fail(v, version, err.code)
+            await self._fail(v, version, err.code, status)
             return None
         except Exception as err:
             code = "api_error" if isinstance(err, anthropic.APIError) else "error"
             log.warning("пакет %s v%d: сбой сборки (%s)", v.slug, version, type(err).__name__)
-            await self._fail(v, version, code)
+            await self._fail(v, version, code, status)
             return None
         await self._log_usages(v.slug, usages)
+        await status.stage("send")
         try:
             await self.store.save(v.slug, version, built, feedback)
         except Exception as err:
             log.warning("пакет %s v%d: не сохранён (%s)", v.slug, version, type(err).__name__)
-            await self._fail(v, version, "save_error")
+            await self._fail(v, version, "save_error", status)
             return None
         return built
 
@@ -214,8 +321,10 @@ class PackageRunner:
         for step, usage in usages:
             await self.db.log_event("llm", slug, step=step, **asdict(usage))
 
-    async def _fail(self, v: Vacancy, version: int, code: str) -> None:
+    async def _fail(self, v: Vacancy, version: int, code: str, status: BuildStatus) -> None:
+        """Статус показывает, на каком шаге упало; отдельное сообщение — чтобы пришло уведомление."""
         await self.store.fail(v.slug, version, code)
+        await status.failed(code)
         await self.bot.send_message(
             self.owner_id, f"Пакет не собрался: {code}", parse_mode=None, reply_parameters=self._reply(v)
         )

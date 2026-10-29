@@ -11,7 +11,7 @@ import anthropic
 import httpx2
 import pytest
 from aiogram import Bot
-from aiogram.methods import SendDocument, SendMessage
+from aiogram.methods import EditMessageText, SendDocument, SendMessage
 from aiogram.types import CallbackQuery, Chat, Message, Update, User
 
 from jobagent.bot import HELP, kb_new, make_dispatcher
@@ -41,18 +41,27 @@ USAGE = Usage(model="claude-opus-5-5", input_tokens=10, output_tokens=5, cache_r
 class FakeBuilder:
     """Вместо PackageBuilder: отдаёт заданный пакет или бросает исключение; может ждать Event."""
 
-    def __init__(self, result=None, error: Exception | None = None, gate: asyncio.Event | None = None):
+    def __init__(
+        self, result=None, error: Exception | None = None, gate: asyncio.Event | None = None, retry: bool = False
+    ):
         self.result = result or built()
         self.error = error
         self.gate = gate
+        self.retry = retry  # сообщить о шаге пересборки, как настоящий сборщик
         self.calls: list[dict] = []
 
-    async def build(self, v, feedback=None, previous=None):
+    async def build(self, v, feedback=None, previous=None, progress=None):
         self.calls.append({"slug": v.slug, "feedback": feedback, "previous": previous})
+        step = progress or (lambda name: asyncio.sleep(0))
+        if previous is None:
+            await step("map")
+        await step("resume")
         if self.gate is not None:
             await self.gate.wait()
         if self.error is not None:
             raise self.error
+        for name in ("letter", "check", *(("retry",) if self.retry else ()), "pdf"):
+            await step(name)
         return self.result, [("package_map", USAGE), ("package_resume", USAGE)]
 
 
@@ -114,6 +123,21 @@ async def events(db, prefix="") -> list[tuple[str, dict]]:
     return [r for r in rows if r[0].startswith(prefix)]
 
 
+def is_status(m: SendMessage) -> bool:
+    return m.text.startswith("⏳ Готовлю отклик")
+
+
+def notes(h) -> list[SendMessage]:
+    """Сообщения пакета без статуса сборки."""
+    return [m for m in h.session.of(SendMessage) if not is_status(m)]
+
+
+def status_texts(h) -> list[str]:
+    """Статус: текст при отправке и все его правки по порядку."""
+    sent = [m for m in h.session.of(SendMessage) if is_status(m)]
+    return [m.text for m in sent] + [e.text for e in h.session.of(EditMessageText)]
+
+
 def buttons(markup) -> list[str]:
     return [b.callback_data for row in (markup.inline_keyboard if markup else []) for b in row]
 
@@ -144,7 +168,7 @@ async def test_package_button_builds_and_sends(db, store, harness):
     assert doc.caption == f"Резюме v1 · {ROLE}"
     assert doc.parse_mode is None
     assert doc.reply_parameters.message_id == CARD_MSG
-    letter_msg, summary_msg = h.session.of(SendMessage)
+    letter_msg, summary_msg = notes(h)
     assert letter_msg.text == pkg.letter_text.strip()
     assert letter_msg.parse_mode is None
     assert letter_msg.reply_parameters.message_id == CARD_MSG
@@ -171,7 +195,7 @@ async def test_redo_button_on_letter_when_summary_empty(db, harness):
     h = harness(FakeBuilder(replace(built(), removed=[], warnings=[], cut_steps=[])))
     await h.press(f"pk:{VID}")
     await h.finish()
-    (letter_msg,) = h.session.of(SendMessage)
+    (letter_msg,) = notes(h)
     assert buttons(letter_msg.reply_markup) == [f"rd:{VID}:1"]
 
 
@@ -275,7 +299,7 @@ async def test_build_error_reports_code(db, harness, caplog):
     await h.press(f"pk:{VID}")
     await h.finish()
 
-    (msg,) = h.session.of(SendMessage)
+    (msg,) = notes(h)
     assert msg.text == "Пакет не собрался: composition"
     assert msg.reply_parameters.message_id == CARD_MSG
     assert h.session.of(SendDocument) == []
@@ -299,7 +323,7 @@ async def test_unexpected_error_reports_code_without_text(db, harness, caplog, e
     h = harness(FakeBuilder(error=error))
     await h.press(f"pk:{VID}")
     await h.finish()
-    (msg,) = h.session.of(SendMessage)
+    (msg,) = notes(h)
     assert msg.text == f"Пакет не собрался: {code}"
     assert dict(await events(db, "package_failed"))["package_failed"] == {"version": 1, "code": code}
     assert "секретный текст" not in caplog.text
@@ -318,7 +342,10 @@ async def test_save_error_fails_package(db, store, harness, monkeypatch):
     await h.finish()
     assert (await db.get_package(SLUG, 1))["status"] == "failed"
     assert dict(await events(db, "package_failed"))["package_failed"] == {"version": 1, "code": "save_error"}
-    assert [m.text for m in h.session.of(SendMessage)] == ["Пакет не собрался: save_error"]
+    assert [m.text for m in notes(h)] == ["Пакет не собрался: save_error"]
+    # статус показывает, что сборка прошла, а упало сохранение
+    assert status_texts(h)[-1].splitlines()[0].startswith("❌ Отклик v1 не собрался: save_error")
+    assert status_texts(h)[-1].splitlines()[-1] == "✗ сохранение и отправка"
 
 
 async def test_caption_and_texts_within_telegram_limits(db, harness):
@@ -454,7 +481,8 @@ async def test_delivery_failure_after_save_is_reported(db, harness, caplog):
     h.runner.bot = h.bot
     await h.press(f"pk:{VID}")
     await h.finish()
-    (msg,) = h.session.of(SendMessage)
+    (msg,) = notes(h)
+    assert status_texts(h)[-1].startswith("⚠️ Отклик v1 собран, но не отправлен: TelegramNetworkError")
     assert msg.text == (
         "Пакет v1 собран, но не отправлен: TelegramNetworkError. "
         "Нажми «Подготовить отклик» ещё раз или возьми файлы через `cli`."
@@ -483,3 +511,108 @@ async def test_delivery_failure_notice_failing_too_is_swallowed(db, harness, cap
     assert (await db.get_package(SLUG, 1))["status"] == "ready"
     assert "секретный текст" not in caplog.text
     assert not h.runner.lock.locked()
+
+
+# ---------- статус сборки в чате ----------
+
+
+def current_stage(text: str) -> str | None:
+    return next((line[2:] for line in text.splitlines() if line.startswith("▸ ")), None)
+
+
+async def test_status_message_follows_build_and_ends_ready(db, harness):
+    await add_vacancy(db)
+    h = harness()
+    await h.press(f"pk:{VID}")
+    await h.finish()
+
+    (opened,) = [m for m in h.session.of(SendMessage) if is_status(m)]
+    assert opened.reply_parameters.message_id == CARD_MSG
+    assert opened.parse_mode is None
+    assert opened.text.splitlines()[1] == f"{ROLE} · Acme"
+    assert h.session.calls.index(opened) < h.session.calls.index(h.session.of(SendDocument)[0])
+
+    edits = h.session.of(EditMessageText)
+    assert {e.message_id for e in edits} == {1000}  # правится одно и то же сообщение
+    assert all(e.parse_mode is None for e in edits)
+    assert [current_stage(e.text) for e in edits[:-1]] == [
+        "карта требований", "резюме", "сопроводительное письмо", "проверка фактов",
+        "PDF на одну страницу", "сохранение и отправка",
+    ]
+    assert "✓ проверка фактов" in edits[-2].text and "· сохранение" not in edits[-2].text
+    assert "пересборка" not in "".join(e.text for e in edits)
+    assert edits[-1].text.startswith("✅ Отклик v1 готов · 0:0")
+    assert edits[-1].text.splitlines()[1] == f"{ROLE} · Acme"
+    # итог правится после отправки пакета: «готов» значит, что файлы уже в чате
+    assert h.session.calls.index(edits[-1]) > h.session.calls.index(notes(h)[-1])
+
+
+async def test_status_shows_retry_only_when_it_happened(db, harness):
+    await add_vacancy(db)
+    h = harness(FakeBuilder(retry=True))
+    await h.press(f"pk:{VID}")
+    await h.finish()
+    stages = [current_stage(t) for t in status_texts(h)[1:-1]]
+    assert stages.index("проверка фактов") + 1 == stages.index("пересборка по замечаниям проверки")
+
+
+async def test_redo_status_has_no_requirement_map(db, store, harness):
+    await add_vacancy(db)
+    await store.save(SLUG, await store.start(SLUG), built(), None)
+    h = harness()
+    await h.press(f"rd:{VID}:1")
+    await h.reply(next(iter(h.runner.pending_redo)), "письмо короче")
+    await h.finish()
+    texts = status_texts(h)
+    assert texts[0].startswith("⏳ Готовлю отклик v2 по правке v1")
+    assert all("карта требований" not in t for t in texts)
+    assert texts[-1].startswith("✅ Отклик v2 готов")
+
+
+async def test_status_marks_failed_step(db, harness):
+    await add_vacancy(db)
+    h = harness(FakeBuilder(error=PackageError("x", code="composition")))
+    await h.press(f"pk:{VID}")
+    await h.finish()
+    final = status_texts(h)[-1].splitlines()
+    assert final[0].startswith("❌ Отклик v1 не собрался: composition")
+    assert final[-2:] == ["✓ карта требований", "✗ резюме"]  # шаги после упавшего не показываются
+
+
+async def test_status_says_interrupted_on_shutdown(db, harness):
+    await add_vacancy(db)
+    h = harness(FakeBuilder(gate=asyncio.Event()))  # сборка не закончится сама
+    await h.press(f"pk:{VID}")
+    for _ in range(5):
+        await asyncio.sleep(0)
+    (task,) = h.runner.tasks
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert status_texts(h)[-1].startswith("⛔ Сборка v1 прервана перезапуском сервиса")
+    assert not h.runner.lock.locked()
+    assert (await db.get_package(SLUG, 1))["status"] == "building"  # failed (restart) ставит следующий старт
+
+
+async def test_status_failures_do_not_break_build(db, harness, caplog):
+    class StatusFailing(FakeSession):
+        async def make_request(self, bot, method, timeout=None):
+            if isinstance(method, SendMessage) and is_status(method):
+                self.calls.append(method)
+                raise TelegramNetworkError(method=method, message="секретный текст")
+            return await super().make_request(bot, method, timeout)
+
+    caplog.set_level(logging.DEBUG)
+    await add_vacancy(db)
+    h = harness()
+    h.session = StatusFailing()
+    h.bot = Bot("123456:TESTTOKEN", session=h.session)
+    h.runner.bot = h.bot
+    await h.press(f"pk:{VID}")
+    await h.finish()
+    assert h.session.of(EditMessageText) == []  # править нечего
+    assert len(h.session.of(SendDocument)) == 1
+    assert (await db.get_package(SLUG, 1))["status"] == "ready"
+    assert "статус не отправлен (TelegramNetworkError)" in caplog.text
+    ours = "\n".join(r.getMessage() for r in caplog.records if r.name.startswith("jobagent"))
+    assert "секретный текст" not in caplog.text and ROLE not in ours  # в aiosqlite роль есть: это запись в базу

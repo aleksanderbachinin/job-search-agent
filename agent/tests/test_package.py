@@ -864,3 +864,22 @@ async def test_fit_one_page_runs_off_the_event_loop(fb_dir, monkeypatch):
     monkeypatch.setattr(package, "fit_one_page", spy)
     await build_happy(fb_dir)
     assert threads and threads[0] != threading.get_ident()
+
+
+async def test_build_reports_progress_steps(fb_dir):
+    steps: list[str] = []
+
+    async def progress(name):
+        steps.append(name)
+
+    await builder(queue_client([], happy_queue()), fb_dir).build(vacancy(), progress=progress)
+    assert steps == ["map", "resume", "letter", "check", "pdf"]
+
+    steps.clear()
+    bad = resume({"MPS": [claim(INVENTED, "MPS-2")]})
+    client = queue_client([], [
+        (MAP, MAP_MODEL), (bad, GEN_MODEL), (letter(), GEN_MODEL), (CHECK_OK, CHECK_MODEL),
+        (bad, GEN_MODEL), (CHECK_OK, CHECK_MODEL),
+    ])
+    await builder(client, fb_dir).build(vacancy(), progress=progress)
+    assert steps == ["map", "resume", "letter", "check", "retry", "pdf"]
