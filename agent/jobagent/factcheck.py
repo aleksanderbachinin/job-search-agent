@@ -10,7 +10,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-from jobagent.facts import FactBase, extract_names, extract_numbers, unknown_terms
+from jobagent.facts import GENERIC_TERMS, FactBase, extract_names, extract_numbers, unknown_terms
 from jobagent.package_models import Claim, LetterDraft, Lang, RequirementMap, ResumeDraft
 from jobagent.package_rules import (
     COMPOSITION,
@@ -26,7 +26,7 @@ from jobagent.textchecks import detect_language, find_dashes, find_stop_phrases,
 ViolationCode = Literal[
     "unknown_fact", "wrong_employer", "no_facts", "number", "term", "unknown_term", "forbidden",
     "gap", "composition", "bullets", "headline", "title", "dash", "length", "stop_phrase",
-    "language", "semantic",
+    "language", "language_doc", "semantic",
 ]
 
 # Пункт навыков ссылается только на разделы «Навыки и инструменты» и «Профиль».
@@ -44,6 +44,7 @@ _COMMON_CAPITALIZED = frozenset(
 )
 
 _LATIN_WORD = re.compile(r"[A-Za-z][A-Za-z0-9]*")
+_GENERIC_LOWER = frozenset(t.lower() for t in GENERIC_TERMS)
 
 
 @dataclass(frozen=True)
@@ -177,9 +178,27 @@ def check_claim(
     return _check_claim(claim, path, allowed_employers, fb, req_map)
 
 
-def _language(text: str, path: str, lang: Lang) -> list[Violation]:
-    found = detect_language(text)
-    return [] if found == lang else [Violation(path, "language", f"{found}, нужен {lang}")]
+def _without_names(text: str, vocabulary: frozenset[str]) -> str:
+    """Текст без латинских названий: слов с заглавной или цифрой, слов словаря и общих сокращений.
+    Язык решают остальные слова: «Вёл AEZAKMI Browser: $18K MRR, B2B SaaS» — русский текст."""
+    def keep(m: re.Match[str]) -> str:
+        word = m.group()
+        low = word.lower()
+        if word[0].isupper() or any(c.isdigit() for c in word) or low in vocabulary or low in _GENERIC_LOWER:
+            return " "
+        return word
+    return _LATIN_WORD.sub(keep, text)
+
+
+def _language(
+    text: str, path: str, lang: Lang, fb: FactBase, code: ViolationCode = "language"
+) -> list[Violation]:
+    """Язык текста без названий. Текст из одних названий языка не имеет и проходит."""
+    rest = _without_names(text, fb.vocabulary)
+    if not any(c.isalpha() for c in rest):
+        return []
+    found = detect_language(rest)
+    return [] if found == lang else [Violation(path, code, f"{found}, нужен {lang}")]
 
 
 def _is_subsequence(items: list[str], order: tuple[str, ...]) -> bool:
@@ -209,7 +228,7 @@ def check_resume(draft: ResumeDraft, req_map: RequirementMap, fb: FactBase, lang
     for i, claim in enumerate(draft.summary):
         path = f"summary[{i}]"
         out += check_claim(claim, path, None, fb, req_map)
-        out += _language(claim.text, path, lang)
+        out += _language(claim.text, path, lang, fb)
 
     for i, job in enumerate(draft.jobs):
         lo, hi = bullet_limits(i)
@@ -222,15 +241,15 @@ def check_resume(draft: ResumeDraft, req_map: RequirementMap, fb: FactBase, lang
         for j, claim in enumerate(job.bullets):
             path = f"jobs[{i}].bullets[{j}]"
             out += check_claim(claim, path, allowed, fb, req_map)
-            out += _language(claim.text, path, lang)
+            out += _language(claim.text, path, lang, fb)
 
+    # Навыки — в основном названия инструментов: язык по ним не определить, они не проверяются.
     for i, claim in enumerate(draft.skills):
-        path = f"skills[{i}]"
-        out += check_claim(claim, path, SKILL_EMPLOYERS, fb, req_map)
-        # Навыки — в основном названия инструментов на латинице: в русском резюме это норма.
-        # Ловится только русский текст в английском резюме.
-        if lang == "en":
-            out += _language(claim.text, path, lang)
+        out += check_claim(claim, f"skills[{i}]", SKILL_EMPLOYERS, fb, req_map)
+
+    # Язык всего резюме: короткий пункт может ошибиться, весь текст — нет.
+    text = "\n".join([c.text for c in draft.summary] + [b.text for job in draft.jobs for b in job.bullets])
+    out += _language(text, "resume", lang, fb, "language_doc")
     return out
 
 
@@ -268,9 +287,13 @@ def check_letter(
         phrases = find_stop_phrases(text, lang)
         if phrases:
             out.append(Violation(path, "stop_phrase", "; ".join(phrases)))
-        # Тема — обычно название роли и компании, язык по ней не определить.
-        if path != "letter.subject":
-            out += _language(text, path, lang)
+        # Тема — обычно название роли и компании, язык по ней не определить. Обращение пишет код.
+        if path not in ("letter.subject", "letter.salutation"):
+            out += _language(text, path, lang, fb)
+
+    # Язык всего тела письма: предложения и финал.
+    body_text = "\n".join([s.text for s in draft.sentences] + [draft.closing])
+    out += _language(body_text, "letter", lang, fb, "language_doc")
 
     # Подпись добавляет код, тема в объём письма не входит.
     body = "\n".join(text for path, text in parts if path != "letter.subject")

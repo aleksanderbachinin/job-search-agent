@@ -732,3 +732,76 @@ async def test_semantic_masked_gap_is_removed(fb_dir):
     pkg, _ = await builder(client, fb_dir).build(vacancy())
     assert ("jobs[0].bullets[3]", "semantic", "masks_gap") in [(x.path, x.code, x.detail) for x in pkg.removed]
     assert masked not in [b.text for j in pkg.resume.jobs for b in j.bullets]
+
+
+# ---------- F3: язык ----------
+
+
+def resume_ru() -> dict:
+    """Русское builder-резюме: пункты — тексты самих фактов; у AEZAKMI короткий пункт из названий."""
+    fb = parse_facts(EXPERIENCE)
+    draft = resume()
+    for item in draft["summary"]:
+        item["text"] = fb.facts[item["facts"][0]].text
+    for job in draft["jobs"]:
+        for item in job["bullets"]:
+            item["text"] = fb.facts[item["facts"][0]].text
+            item["facts"] = item["facts"][:1]
+    aez = next(j for j in draft["jobs"] if j["employer"] == "AEZ")
+    aez["bullets"].append(claim(SHORT_RU, "AEZ-1"))
+    return draft
+
+
+SHORT_RU = "Вёл AEZAKMI Browser: $18K MRR, B2B SaaS"
+
+
+def letter_ru() -> dict:
+    fb = parse_facts(EXPERIENCE)
+    return {
+        "subject": "AI Product Builder, Acme",
+        "salutation": "Здравствуйте!",
+        "sentences": [
+            {"text": "Acme ищет AI Product Builder, и ваша платформа агентов близка к моей работе.",
+             "facts": [], "requirement": None, "paragraph": 1},
+            {"text": fb.facts["MPS-1"].text, "facts": ["MPS-1"], "requirement": None, "paragraph": 2},
+            {"text": "Резюме во вложении, готов созвониться на следующей неделе.",
+             "facts": [], "requirement": None, "paragraph": 3},
+        ],
+        "closing": "Буду рад обсудить вашу дорожную карту.",
+    }
+
+
+async def test_russian_package_with_tool_heavy_bullet_is_built(fb_dir):
+    captured: list = []
+    client = queue_client(captured, [
+        (MAP, MAP_MODEL), (resume_ru(), GEN_MODEL), (letter_ru(), GEN_MODEL), (CHECK_OK, CHECK_MODEL),
+    ])
+    pkg, _ = await builder(client, fb_dir).build(vacancy(vacancy_language="ru"))
+    assert pkg.lang == "ru"
+    assert [kind(b) for b in bodies(captured)] == ["map", "resume", "letter", "check"]
+    assert pkg.removed == []
+    assert SHORT_RU in [b.text for j in pkg.resume.jobs for b in j.bullets]
+
+
+async def test_english_bullet_in_russian_resume_is_removed_not_fatal(fb_dir):
+    captured: list = []
+    bad = resume_ru()
+    bad["jobs"][2]["bullets"].append(claim(B["MPS"][0].text, *B["MPS"][0].facts))
+    client = queue_client(captured, [
+        (MAP, MAP_MODEL), (bad, GEN_MODEL), (letter_ru(), GEN_MODEL), (CHECK_OK, CHECK_MODEL),
+        (bad, GEN_MODEL), (CHECK_OK, CHECK_MODEL),
+    ])
+    pkg, _ = await builder(client, fb_dir).build(vacancy(vacancy_language="ru"))
+    assert [(x.path, x.code) for x in pkg.removed] == [("jobs[2].bullets[3]", "language")]
+
+
+async def test_english_letter_for_russian_vacancy_fails(fb_dir):
+    captured: list = []
+    client = queue_client(captured, [
+        (MAP, MAP_MODEL), (resume_ru(), GEN_MODEL), (letter(), GEN_MODEL), (CHECK_OK, CHECK_MODEL),
+        (letter(), GEN_MODEL), (CHECK_OK, CHECK_MODEL),
+    ])
+    with pytest.raises(PackageError) as err:
+        await builder(client, fb_dir).build(vacancy(vacancy_language="ru"))
+    assert err.value.code == "language"
+    assert [kind(b) for b in bodies(captured)] == ["map", "resume", "letter", "check", "letter", "check"]

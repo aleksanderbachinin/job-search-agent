@@ -532,3 +532,37 @@ def test_transliterated_name_still_needs_its_fact(fb, req_map):
     v = check_claim(Claim(text="Launched a new analytics tool on Yandex that reached 1,000+ MAU.", facts=["MPS-1"]),
                     "b", frozenset({"MPS"}), fb, req_map)
     assert [(x.code, x.detail) for x in v] == [("term", "yandex")]
+
+
+# ---------- F3: язык ----------
+
+
+def test_short_russian_bullet_with_tool_names_is_russian(fb, req_map):
+    # Названия на латинице не решают язык утверждения: «Вёл AEZAKMI Browser: $18K MRR, B2B SaaS» — русский.
+    draft = _resume(fb, VALID_BUILDER)
+    draft.summary = [Claim(text=fb.facts["MPS-1"].text, facts=["MPS-1"])]
+    for job in draft.jobs:
+        job.bullets = [Claim(text=fb.facts[c.facts[0]].text, facts=c.facts) for c in job.bullets]
+    draft.jobs[3].bullets[1] = Claim(text="Вёл AEZAKMI Browser: $18K MRR, B2B SaaS", facts=["AEZ-1"])
+    v = check_resume(draft, req_map, fb, "ru")
+    assert not {"language", "language_doc"} & codes(v), [x for x in v if x.code.startswith("language")]
+
+
+def test_language_per_claim_and_whole_document(fb, req_map):
+    # Английский пункт в русском резюме — нарушение пункта; всё резюме на английском — нарушение документа.
+    v = check_resume(_resume(fb, VALID_BUILDER), req_map, fb, "ru")
+    assert ("resume", "language_doc") in {(x.path, x.code) for x in v}
+    assert ("summary[0]", "language") in {(x.path, x.code) for x in v}
+    letter = _letter(GOOD_LETTER)
+    v = check_letter(letter, req_map, fb, "ru", "Acme", "Senior Product Manager")
+    assert ("letter", "language_doc") in {(x.path, x.code) for x in v}
+
+
+def test_skills_and_salutation_are_not_checked_for_language(fb, req_map):
+    skills = [Claim(text="Аналитика: SQL, GA4", facts=["SKILL-3"])]
+    v = check_resume(_resume(fb, VALID_BUILDER, skills=skills), req_map, fb, "en")
+    assert not [x for x in v if x.path.startswith("skills") and x.code == "language"]
+    draft = _letter(GOOD_LETTER)
+    draft.salutation = "Здравствуйте!"
+    v = check_letter(draft, req_map, fb, "en", "Acme", "Senior Product Manager")
+    assert not [x for x in v if x.code.startswith("language")], v
