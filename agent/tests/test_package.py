@@ -200,15 +200,18 @@ def letter(subject: str = "AI Product Builder at Acme", salutation: str = "Dear 
 CHECK_OK = {"items": []}
 
 
-def check_rejects(prefix: str):
+def sent_claims(body: dict) -> list[dict]:
+    return json.loads(re.search(r"<claims>\n(.*)\n</claims>", user_text(body), re.S).group(1))
+
+
+def check_rejects(prefix: str, reason: str = "role_inflated"):
     """Ответ проверки смысла: ok=false для утверждения, текст которого начинается с prefix."""
 
     def respond(body: dict) -> dict:
-        claims = json.loads(re.search(r"<claims>\n(.*)\n</claims>", user_text(body), re.S).group(1))
         return {"items": [
             {"index": c["index"], "ok": not c["text"].startswith(prefix),
-             "reason_code": "ok" if not c["text"].startswith(prefix) else "role_inflated"}
-            for c in claims
+             "reason_code": "ok" if not c["text"].startswith(prefix) else reason}
+            for c in sent_claims(body)
         ]}
 
     return respond
@@ -306,7 +309,11 @@ async def test_feedback_cannot_add_missing_experience(fb_dir):
 
 async def test_masked_company_salutation(fb_dir):
     captured: list = []
-    client = queue_client(captured, happy_queue())
+    # Компания скрыта: в теме её нет (иначе тема — утверждение без фактов с чужим названием).
+    client = queue_client(captured, [
+        (MAP, MAP_MODEL), (resume(), GEN_MODEL), (letter(subject="AI Product Builder"), GEN_MODEL),
+        (CHECK_OK, CHECK_MODEL),
+    ])
     pkg, _ = await builder(client, fb_dir).build(vacancy(company_masked=True, company=None))
     assert pkg.letter.salutation == "Dear Hiring Team,"
     assert "Acme" not in pkg.letter_text.split("\n\n")[1]
@@ -664,3 +671,64 @@ def test_render_letter_without_telegram():
     draft = LetterDraft(subject=None, salutation="Hi,", sentences=[], closing="")
     text = render_letter(draft, Contacts("a@example.com", "https://www.linkedin.com/in/x/", "", ""), "en")
     assert text.endswith("Alexander Bachinin\na@example.com | https://www.linkedin.com/in/x/")
+
+
+# ---------- финальная волна правок ----------
+
+
+async def test_closing_and_subject_without_facts_are_replaced(fb_dir):
+    # F2: тема и финал — утверждения без номеров; число или название в них не подтвердить.
+    captured: list = []
+    bad = {**letter(subject="AI Product Builder at Acme, 9 years in AI"),
+           "closing": "I grew ARR to $5M at Ozon and would love to talk."}
+    client = queue_client(captured, [
+        (MAP, MAP_MODEL), (resume(), GEN_MODEL), (bad, GEN_MODEL), (CHECK_OK, CHECK_MODEL),
+        (bad, GEN_MODEL), (CHECK_OK, CHECK_MODEL),
+    ])
+    pkg, _ = await builder(client, fb_dir).build(vacancy())
+    assert [kind(b) for b in bodies(captured)] == ["map", "resume", "letter", "check", "letter", "check"]
+    assert {(x.path, x.code) for x in pkg.removed} == {("letter.subject", "no_facts"), ("letter.closing", "no_facts")}
+    assert pkg.letter.subject == "AI Product Builder at Acme"
+    assert pkg.letter.closing == "I would be glad to talk."
+    assert "Ozon" not in pkg.letter_text and "9 years" not in pkg.letter_text
+    assert "letter.closing: no_facts" in user_text(bodies(captured)[4])
+
+
+async def test_semantic_check_sees_subject_closing_and_gaps(fb_dir):
+    # F2: тема и финал идут в проверку смысла как утверждения без номеров.
+    # F4: проверка смысла знает пробелы карты.
+    pkg, _, captured = await build_happy(fb_dir)
+    check = bodies(captured)[3]
+    claims = sent_claims(check)
+    texts = {c["text"]: c["facts"] for c in claims}
+    assert texts["AI Product Builder at Acme"] == []
+    assert texts[letter()["closing"]] == []
+    gaps = json.loads(re.search(r"<gaps>\n(.*)\n</gaps>", user_text(check), re.S).group(1))
+    assert gaps == ["Strong Python"]
+    assert "masks_gap" in json.dumps(check["system"], ensure_ascii=False)
+
+
+async def test_semantic_rejection_of_closing_replaces_it(fb_dir):
+    captured: list = []
+    client = queue_client(captured, [
+        (MAP, MAP_MODEL), (resume(), GEN_MODEL), (letter(), GEN_MODEL),
+        (check_rejects("Happy to walk", "experience_claim"), CHECK_MODEL),
+        (letter(), GEN_MODEL), (check_rejects("Happy to walk", "experience_claim"), CHECK_MODEL),
+    ])
+    pkg, _ = await builder(client, fb_dir).build(vacancy())
+    assert [(x.path, x.code, x.detail) for x in pkg.removed] == [("letter.closing", "semantic", "experience_claim")]
+    assert pkg.letter.closing == "I would be glad to talk."
+
+
+async def test_semantic_masked_gap_is_removed(fb_dir):
+    # F4: пункт с фактами, который утверждает опыт по пробелу, убирается с reason masks_gap.
+    captured: list = []
+    masked = "Hands-on with scripted data workflows across the platform."
+    bad = resume({"VIBE": [claim(masked, "VIBE-1")]})
+    client = queue_client(captured, [
+        (MAP, MAP_MODEL), (bad, GEN_MODEL), (letter(), GEN_MODEL), (check_rejects("Hands-on", "masks_gap"), CHECK_MODEL),
+        (bad, GEN_MODEL), (check_rejects("Hands-on", "masks_gap"), CHECK_MODEL),
+    ])
+    pkg, _ = await builder(client, fb_dir).build(vacancy())
+    assert ("jobs[0].bullets[3]", "semantic", "masks_gap") in [(x.path, x.code, x.detail) for x in pkg.removed]
+    assert masked not in [b.text for j in pkg.resume.jobs for b in j.bullets]

@@ -134,13 +134,16 @@ def _check_claim(
         if extra_numbers:
             out.append(Violation(path, "number", ", ".join(_fmt_number(n) for n in extra_numbers)))
 
-        exempt = set(extra_names) | _COMMON_CAPITALIZED | _employer_names({f.employer for f in valid}, fb)
+        exempt = _COMMON_CAPITALIZED | _employer_names({f.employer for f in valid}, fb)
         terms = frozenset().union(*(f.terms for f in valid))
+        # Слово словаря подтверждается только процитированными фактами, даже если это название
+        # компании из вакансии (прецедент Wildberries). Название компании и роли освобождает
+        # только от unknown_term.
         extra_terms = sorted(extract_names(claim.text, fb.vocabulary) - terms - exempt)
         if extra_terms:
             out.append(Violation(path, "term", ", ".join(extra_terms)))
         found = _unknown_names(claim.text, fb.vocabulary, names_list=allowed_employers == SKILL_EMPLOYERS)
-        unknown_names = sorted(t for t in found if t.lower() not in exempt)
+        unknown_names = sorted(t for t in found if t.lower() not in exempt | extra_names)
         if unknown_names:
             out.append(Violation(path, "unknown_term", ", ".join(unknown_names)))
 
@@ -248,7 +251,8 @@ def check_letter(
     company: str | None,
     role: str,
 ) -> list[Violation]:
-    """Письмо без подписи. Утверждения без фактов (хук, призыв) проверяет только проверка смысла."""
+    """Письмо без подписи. Предложения без фактов (хук, призыв) проверяет только проверка смысла;
+    тема и финал — утверждения без фактов: числа и названия, кроме компании и роли, в них нельзя."""
     out: list[Violation] = []
     parts: list[tuple[str, str]] = []
     if draft.subject is not None:
@@ -288,4 +292,24 @@ def check_letter(
             out += _check_claim(sentence, path, None, fb, req_map, extra_names=names)
         else:
             out += _gap(sentence, path, req_map)
+    if draft.subject is not None:
+        out += _without_facts(draft.subject, "letter.subject", fb, names)
+    out += _without_facts(draft.closing, "letter.closing", fb, names)
     return out
+
+
+def _without_facts(text: str, path: str, fb: FactBase, names: frozenset[str]) -> list[Violation]:
+    """Тема и финал письма — утверждения без номеров фактов. Число, слово словаря или название,
+    кроме компании и роли из вакансии, в них не из чего подтвердить: no_facts."""
+    allowed = names | _COMMON_CAPITALIZED
+    numbers = sorted(extract_numbers(text))
+    found = sorted((extract_names(text, fb.vocabulary) - allowed) | {
+        t for t in unknown_terms(text, fb.vocabulary) if t.lower() not in allowed
+    })
+    if not numbers and not found:
+        return []
+    detail = "; ".join(part for part in (
+        "числа: " + ", ".join(_fmt_number(n) for n in numbers) if numbers else "",
+        "названия: " + ", ".join(found) if found else "",
+    ) if part)
+    return [Violation(path, "no_facts", detail)]

@@ -99,6 +99,27 @@ def extract_numbers(text: str) -> frozenset[float]:
 
 _WORD = re.compile(r"[A-Za-z][A-Za-z0-9]*")
 
+# Русские названия в фактах и их английские написания: «Яндекс Метрика» в факте делает
+# «Yandex Metrica» словом словаря и названием этого факта. Начало слова с заглавной: падежи
+# («Метрики») считаются, обычное слово («по метрикам») нет. Список — по файлу опыта; новое
+# русское название продукта в файле опыта — новая строка здесь.
+_CYRILLIC_ALIASES: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = tuple(
+    (re.compile(rf"(?<![А-Яа-яЁё]){stem}"), aliases)
+    for stem, aliases in (
+        ("Яндекс", ("yandex",)),
+        ("Метрик", ("metrica", "metrika")),
+        ("РАНХиГС", ("ranepa",)),
+        ("Сбер", ("sber",)),
+        ("Озон", ("ozon",)),
+        ("США", ("us", "usa")),
+    )
+)
+
+
+def cyrillic_aliases(text: str) -> frozenset[str]:
+    """Английские написания русских названий из текста (в нижнем регистре)."""
+    return frozenset(a for pattern, aliases in _CYRILLIC_ALIASES if pattern.search(text) for a in aliases)
+
 
 def _latin_words(text: str) -> list[re.Match[str]]:
     return [m for m in _WORD.finditer(text) if len(m.group()) >= 2]
@@ -111,12 +132,14 @@ def build_vocabulary(text: str) -> frozenset[str]:
         word = m.group()
         if word[0].isupper() or any(c.isdigit() for c in word):
             words.add(word.lower())
-    return frozenset(words - _GENERIC_LOWER)
+    return frozenset((words | cyrillic_aliases(text)) - _GENERIC_LOWER)
 
 
 def extract_terms(text: str, vocabulary: frozenset[str]) -> frozenset[str]:
-    """Названия из словаря, найденные в тексте (без учёта регистра, в нижнем регистре)."""
-    return frozenset(m.group().lower() for m in _latin_words(text) if m.group().lower() in vocabulary)
+    """Названия из словаря, найденные в тексте (без учёта регистра, в нижнем регистре), вместе с
+    английскими написаниями русских названий из текста."""
+    found = {m.group().lower() for m in _latin_words(text) if m.group().lower() in vocabulary}
+    return frozenset(found | (cyrillic_aliases(text) & vocabulary))
 
 
 def _starts_sentence(text: str, pos: int) -> bool:

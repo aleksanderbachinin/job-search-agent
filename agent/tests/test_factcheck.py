@@ -466,3 +466,69 @@ def test_violation_detail_has_no_claim_text(fb, req_map):
             leaked = {w for w in re.findall(r"[A-Za-zА-Яа-я]{4,}", v.detail.lower()) if w in words}
             assert leaked <= {"wildberries", "tableau"}, (v.code, leaked)
     assert {"unknown_fact", "wrong_employer", "number", "term", "unknown_term", "forbidden", "gap", "no_facts"} <= found
+
+
+# ---------- финальная волна правок: F1, F2, F4, F10 ----------
+
+
+def test_company_name_from_vocabulary_still_needs_cited_fact(fb, req_map):
+    # Прецедент Wildberries: название компании из вакансии не освобождает слово словаря от сверки
+    # с процитированными фактами. «wildberries» в словаре (CLOWE-2), в MPS-0 его нет.
+    draft = _letter(GOOD_LETTER, subject="Senior Product Manager at Wildberries")
+    draft.sentences.append(LetterSentence(
+        text="At MPSTATS I built market intelligence for Wildberries sellers.", facts=["MPS-0"], paragraph=2))
+    v = check_letter(draft, req_map, fb, "en", "Wildberries", "Senior Product Manager")
+    terms = [x for x in v if x.path == "letter[2]" and x.code == "term"]
+    assert terms and "wildberries" in terms[0].detail, v
+
+
+def test_company_name_outside_vocabulary_is_not_unknown_term(fb, req_map):
+    # Название компании, которого нет в словаре, — не выдуманный инструмент.
+    draft = _letter(["Zyxcorp is hiring a Senior Product Manager.", "I would like to talk about the role."],
+                    subject="Senior Product Manager at Zyxcorp")
+    draft.salutation = "Hello Zyxcorp team,"
+    draft.sentences.append(LetterSentence(
+        text="At MPSTATS I launched a new analytics tool for Zyxcorp style sellers that reached 1,000+ MAU.",
+        facts=["MPS-1"], paragraph=2))
+    assert check_letter(draft, req_map, fb, "en", "Zyxcorp", "Senior Product Manager") == []
+
+
+@pytest.mark.parametrize("field,text,detail_part", [
+    ("closing", "I grew ARR to $5M at Ozon and would love to talk.", "5000000"),
+    ("closing", "Happy to show how MPSTATS sellers used my tool.", "mpstats"),
+    ("subject", "Senior Product Manager, 9 years in AI", "9"),
+    ("subject", "Senior Product Manager at Acme, ex Tableau", "Tableau"),
+])
+def test_letter_subject_and_closing_are_claims_without_facts(fb, req_map, field, text, detail_part):
+    draft = _letter(GOOD_LETTER)
+    setattr(draft, field, text)
+    v = check_letter(draft, req_map, fb, "en", "Acme", "Senior Product Manager")
+    found = [x for x in v if x.path == f"letter.{field}" and x.code == "no_facts"]
+    assert found and detail_part in found[0].detail, v
+
+
+def test_letter_subject_and_closing_may_name_company_and_role(fb, req_map):
+    draft = _letter(GOOD_LETTER, subject="Senior Product Manager at Acme")
+    draft.closing = "I would be glad to talk about the Senior Product Manager role at Acme."
+    assert check_letter(draft, req_map, fb, "en", "Acme", "Senior Product Manager") == []
+
+
+def test_gap_requirement_matched_ignoring_case_and_spaces(fb, req_map):
+    c = Claim(text="Hands-on with data workflows", facts=["VIBE-1"], requirement="  strong   PYTHON ")
+    assert "gap" in codes(check_claim(c, "b", frozenset({"VIBE"}), fb, req_map))
+
+
+@pytest.mark.parametrize("text,facts,allowed", [
+    ("Analytics stack: GA4, Yandex Metrica, SQL", ["MPS-6"], {"MPS"}),
+    ("Analytics: GA4, Yandex Metrika, Metabase, SQL", ["SKILL-3"], {"SKILL", "PROF"}),
+])
+def test_cyrillic_product_names_in_english_text(fb, req_map, text, facts, allowed):
+    # «Яндекс Метрика» в факте: английское написание — то же название, а не выдуманное.
+    assert check_claim(Claim(text=text, facts=facts), "b", frozenset(allowed), fb, req_map) == []
+
+
+def test_transliterated_name_still_needs_its_fact(fb, req_map):
+    # Yandex становится словом словаря: без факта, где есть «Яндекс», это term.
+    v = check_claim(Claim(text="Launched a new analytics tool on Yandex that reached 1,000+ MAU.", facts=["MPS-1"]),
+                    "b", frozenset({"MPS"}), fb, req_map)
+    assert [(x.code, x.detail) for x in v] == [("term", "yandex")]
