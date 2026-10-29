@@ -48,7 +48,7 @@ Hirify вебхук ─┐
 | `CANDIDATE_EMAIL`, `CANDIDATE_LINKEDIN` | Контакты в шапке резюме и подписи письма. Без них пакеты отклика выключены: кнопки нет, в журнале одно предупреждение при старте |
 | `CANDIDATE_TELEGRAM` | Ссылка на Telegram для тех же мест, необязательно |
 
-Необязательные настройки пакета отклика: `PACKAGE_MODEL` (генерация резюме и письма, по умолчанию `claude-opus-5-5`), `PACKAGE_CHECK_MODEL` (проверка смысла утверждений, `claude-haiku-5-5`), `PACKAGES_DIR` (папка пакетов, `agent/data/packages`). Карту требований строит `SCORING_MODEL`.
+Необязательные настройки пакета отклика: `PACKAGE_MODEL` (генерация резюме и письма, по умолчанию `claude-opus-5-5`), `PACKAGE_CHECK_MODEL` (проверка смысла утверждений, `claude-haiku-5-5`), `PACKAGES_DIR` (папка пакетов, по умолчанию `packages` рядом с базой `DB_PATH`). Карту требований строит `SCORING_MODEL`.
 
 ```bash
 cp agent/.env.example agent/.env
@@ -96,6 +96,7 @@ cd agent && uv run python -m jobagent.cli test-webhook <webhook_id>
 | Адрес для Hirify | `https://193-42-112-144.sslip.io/hirify/webhook`, вебхук Hirify id=26, подключён ко всем 6 фильтрам |
 | Код | `/opt/jobagent/app` (копия папки «Agent Job Search»), пользователь `jobagent` |
 | База | `/opt/jobagent/data/jobagent.sqlite3` |
+| Пакеты отклика | `/opt/jobagent/data/packages/`. systemd (`ProtectSystem=strict`) даёт сервису писать только в `/opt/jobagent/data`, папка кода для него только для чтения |
 | Ключи | `/opt/jobagent/app/agent/.env`. Рабочий файл: только в нём есть `HIRIFY_WEBHOOK_SECRET` |
 | Сервис | `systemctl status jobagent`, логи: `journalctl -u jobagent -f` |
 | HTTPS | Caddy, `/etc/caddy/Caddyfile`. Наружу открыты только `/hirify/webhook` и `/healthz` |

@@ -41,6 +41,7 @@ class Settings:
     # Пакет отклика: генерация резюме и письма, проверка смысла утверждений.
     package_model: str = "claude-opus-5-5"
     package_check_model: str = "claude-haiku-5-5"
+    # Без PACKAGES_DIR — рядом с базой: на сервере systemd разрешает запись только в папку базы.
     packages_dir: Path = AGENT_DIR / "data" / "packages"
     # Контакты в резюме и подписи письма.
     candidate_email: str = ""
@@ -59,6 +60,7 @@ class Settings:
     def from_env(cls) -> Settings:
         env = os.environ
         d = cls()
+        db_path = Path(env.get("DB_PATH") or d.db_path)
         return cls(
             hirify_api_key=env.get("HIRIFY_API_KEY", ""),
             hirify_webhook_secret=env.get("HIRIFY_WEBHOOK_SECRET", ""),
@@ -66,7 +68,7 @@ class Settings:
             telegram_owner_id=int(env.get("TELEGRAM_OWNER_ID") or 0),
             scrapecreators_api_key=env.get("SCRAPECREATORS_API_KEY", ""),
             feed_ids=_int_list(env.get("HIRIFY_FEED_IDS", "")),
-            db_path=Path(env.get("DB_PATH") or d.db_path),
+            db_path=db_path,
             knowledge_dir=Path(env.get("KNOWLEDGE_DIR") or d.knowledge_dir),
             triage_model=env.get("TRIAGE_MODEL", d.triage_model),
             scoring_model=env.get("SCORING_MODEL", d.scoring_model),
@@ -74,7 +76,7 @@ class Settings:
             prefilter=env.get("PREFILTER", "1").strip().lower() not in ("0", "false", "no", "off"),
             package_model=env.get("PACKAGE_MODEL", d.package_model),
             package_check_model=env.get("PACKAGE_CHECK_MODEL", d.package_check_model),
-            packages_dir=Path(env.get("PACKAGES_DIR") or d.packages_dir),
+            packages_dir=Path(env.get("PACKAGES_DIR") or db_path.parent / "packages"),
             candidate_email=env.get("CANDIDATE_EMAIL", ""),
             candidate_linkedin=env.get("CANDIDATE_LINKEDIN", ""),
             candidate_telegram=env.get("CANDIDATE_TELEGRAM", ""),
