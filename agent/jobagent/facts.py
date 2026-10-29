@@ -158,6 +158,7 @@ _COMMON_ENGLISH = frozenset({
     "lead", "library", "lifecycle", "manager", "marketing", "messenger", "monetization", "ops",
     "owner", "producer", "product", "production", "project", "react", "reels", "senior", "shop",
     "shorts", "store", "studio", "team", "tier", "video", "win",
+    "us",  # из алиаса США: местоимение «us» названием не бывает, «US» с заглавной — бывает
 })
 
 

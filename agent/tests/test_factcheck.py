@@ -566,3 +566,29 @@ def test_skills_and_salutation_are_not_checked_for_language(fb, req_map):
     draft.salutation = "Здравствуйте!"
     v = check_letter(draft, req_map, fb, "en", "Acme", "Senior Product Manager")
     assert not [x for x in v if x.code.startswith("language")], v
+
+
+# ---------- повторное ревью: «us» и первое слово темы ----------
+
+
+def test_pronoun_us_is_not_a_name(fb, req_map):
+    # Алиас США → us не делает местоимение названием.
+    draft = _letter(GOOD_LETTER)
+    draft.sentences.append(LetterSentence(
+        text="At MPSTATS the team helped us launch a new analytics tool that reached 1,000+ MAU.",
+        facts=["MPS-1"], paragraph=2))
+    draft.closing = "Let us talk about the role at Acme."
+    assert check_letter(draft, req_map, fb, "en", "Acme", "Senior Product Manager") == []
+
+
+def test_usa_still_needs_its_fact(fb, req_map):
+    v = check_claim(Claim(text="Launched a new analytics tool in the USA that reached 1,000+ MAU.", facts=["MPS-1"]),
+                    "b", frozenset({"MPS"}), fb, req_map)
+    assert [(x.code, x.detail) for x in v] == [("term", "usa")]
+
+
+def test_subject_first_word_is_checked_as_name(fb, req_map):
+    draft = _letter(GOOD_LETTER, subject="Netflix alumnus for Senior Product Manager at Acme")
+    v = check_letter(draft, req_map, fb, "en", "Acme", "Senior Product Manager")
+    found = [x for x in v if x.path == "letter.subject" and x.code == "no_facts"]
+    assert found and "Netflix" in found[0].detail, v

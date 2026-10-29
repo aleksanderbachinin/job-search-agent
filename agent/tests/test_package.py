@@ -839,7 +839,7 @@ async def test_semantic_check_missing_indices_become_warning(fb_dir):
 async def test_warning_only_violations_do_not_trigger_retry(fb_dir):
     # В письме нет названия роли (title), у VIBE два пункта (bullets): только предупреждения.
     captured: list = []
-    no_role = letter(subject="Your agent platform at Acme")
+    no_role = letter(subject="Acme agent platform")
     no_role["sentences"][0]["text"] = "Acme builds AI agents, and your platform is close to what I built last year."
     short = resume(only={"VIBE": [claim(B["VIBE"][0].text, *B["VIBE"][0].facts),
                                   claim(B["VIBE"][2].text, *B["VIBE"][2].facts)]})
