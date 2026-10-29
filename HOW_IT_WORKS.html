@@ -80,7 +80,7 @@ h3 { font-size: 16px; margin: 0 0 6px; }
 p { margin: 0 0 12px; }
 .lead { color: var(--muted); max-width: 720px; margin-bottom: 18px; }
 .sub { color: var(--muted); margin: 0 0 18px; max-width: 760px; }
-code { font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+code { font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
 .chip { font-size: 13px; padding: 3px 10px; border-radius: 999px; background: var(--surface-2); color: var(--muted); }
 .chip.ok { background: var(--ok-soft); color: var(--ok); }
@@ -246,16 +246,16 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
 <header>
   <div class="chips">
     <span class="chip ok">● работает 24/7</span>
-    <span class="chip">этап MVP-1 «отбор»</span>
+    <span class="chip">MVP-1 «отбор» и MVP-2 «пакет отклика»</span>
     <span class="chip">запущен 26.10.2026</span>
-    <span class="chip">обновлено 28.10.2026</span>
+    <span class="chip">обновлено 29.10.2026</span>
   </div>
   <h1>Как работает агент отбора вакансий</h1>
-  <p class="lead">Агент получает новые вакансии из ваших шести фильтров Hirify, отсеивает неподходящие, для англоязычных вакансий проверяет команду компании в LinkedIn и присылает остальные в Telegram-бот @alexsearchjob_bot. Резюме и сопроводительные письма он пока не готовит, это следующий этап.</p>
+  <p class="lead">Агент получает новые вакансии из ваших шести фильтров Hirify, отсеивает неподходящие, для англоязычных вакансий проверяет команду компании в LinkedIn и присылает остальные в Telegram-бот @alexsearchjob_bot. По кнопке под карточкой он собирает PDF-резюме и сопроводительное письмо под вакансию, отправляете их вы сами.</p>
 
   <div class="keypoints">
-    <div class="panel"><h3>Пять ступеней отсева</h3><p>От бесплатной к самой дорогой, плюс LinkedIn-проверка перед оценкой. В бот попадают только вакансии с оценкой 4 и 5 из 5.</p></div>
-    <div class="panel"><h3>Ничего не уходит работодателю</h3><p>Откликаетесь вы сами. Агент читает вакансии, пишет ваши решения в трекер Hirify, скрывает пропущенные и раскрывает контакт только по вашей кнопке.</p></div>
+    <div class="panel"><h3>Шесть ступеней отсева</h3><p>От бесплатной к самой дорогой: правила, Haiku по карточке, полный текст, Haiku по тексту, Sonnet, плюс LinkedIn-проверка перед оценкой. В бот попадают только вакансии с оценкой 4 и 5 из 5.</p></div>
+    <div class="panel"><h3>Ничего не уходит работодателю</h3><p>Откликаетесь вы сами. Агент читает вакансии, пишет ваши решения в трекер Hirify, скрывает пропущенные. Контакт раскрывает и пакет отклика собирает только по вашей кнопке.</p></div>
     <div class="panel"><h3>Самообучения пока нет</h3><p>Агент копит ваши решения с причинами. На отбор влияете вы: правками файлов и примерами откликов.</p></div>
   </div>
 
@@ -264,6 +264,7 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
     <a href="#funnel">2. Отсев по шагам</a>
     <a href="#timing">3. Скорость</a>
     <a href="#card">4. Карточка и кнопки</a>
+    <a href="#package">4а. Пакет отклика</a>
     <a href="#tracking">5. Трекинг</a>
     <a href="#levers">6. Как управлять</a>
     <a href="#learning">7. Обучение</a>
@@ -314,11 +315,11 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
 
       <rect class="box core" x="282" y="292" width="412" height="52" rx="10"/>
       <text class="t" x="298" y="323">Воркер</text>
-      <text class="s" x="372" y="323">правила → Haiku → текст → LinkedIn → Sonnet</text>
+      <text class="s" x="372" y="323">правила → Haiku ×2 → LinkedIn → Sonnet</text>
 
       <rect class="box core" x="282" y="360" width="412" height="44" rx="10"/>
       <text class="t" x="298" y="387">Telegram-бот</text>
-      <text class="s" x="410" y="387">карточки · кнопки · контакт · /stats</text>
+      <text class="s" x="410" y="387">карточки · кнопки · пакет · /stats</text>
 
       <!-- Внешние справа -->
       <rect class="box ext" x="750" y="180" width="190" height="76" rx="12"/>
@@ -328,7 +329,7 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
 
       <rect class="box ext" x="750" y="270" width="190" height="72" rx="12"/>
       <text class="t" x="768" y="299">Claude API</text>
-      <text class="s" x="768" y="322">Haiku и Sonnet</text>
+      <text class="s" x="768" y="322">Haiku, Sonnet, Opus</text>
 
       <rect class="box ext" x="750" y="356" width="190" height="58" rx="12"/>
       <text class="t" x="768" y="381">Telegram</text>
@@ -391,7 +392,10 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
         <tr><td><code>pipeline.py</code></td><td>порядок ступеней, сбои</td></tr>
         <tr><td><code>cards.py</code>, <code>bot.py</code></td><td>карточка, кнопки, контакт, /stats</td></tr>
         <tr><td><code>db.py</code>, <code>hirify.py</code></td><td>база и клиент Hirify</td></tr>
-        <tr><td><code>config.py</code>, <code>cli.py</code></td><td>настройки, <code>dry-run</code>, <code>setup-webhook</code></td></tr>
+        <tr><td><code>package.py</code>, <code>package_bot.py</code></td><td>пакет отклика: шаги, пересборка, кнопки</td></tr>
+        <tr><td><code>facts.py</code>, <code>factcheck.py</code></td><td>факты с номерами, проверка утверждений</td></tr>
+        <tr><td><code>pdf.py</code>, <code>package_store.py</code></td><td>PDF на одну страницу, версии пакетов</td></tr>
+        <tr><td><code>config.py</code>, <code>cli.py</code></td><td>настройки, <code>dry-run</code>, <code>eval</code>, <code>package</code></td></tr>
       </table>
     </div>
   </div>
@@ -453,8 +457,23 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
         <div class="meter"><div class="bar"><span></span></div><div class="nums"><span class="p">прошло 0</span><span class="r">отсеяно 0</span></div></div>
       </div>
 
-      <div class="stage" data-stage="linkedin">
+      <div class="stage" data-stage="prefilter">
         <div class="n sm">3а</div>
+        <div>
+          <div class="head"><h3>Haiku по полному тексту</h3><span class="cost">≈ 0,02 цента</span></div>
+          <ul>
+            <li>до LinkedIn-проверки и Sonnet: отсеянная здесь вакансия не тратит ни кредиты, ни оценку;</li>
+            <li>модель пишет, что текст говорит о формате, грейде и роли, и называет сработавшее условие. Отсеивает код по этому ответу;</li>
+            <li>условия: формат назван, и все варианты — офис или гибрид без релокации; из России не нанимают; все грейды junior и ниже; роль не продуктовая (growth и product marketing подходят);</li>
+            <li>при сомнении пропускает дальше. Домен, требования и ЗП не оценивает: это работа Sonnet.</li>
+          </ul>
+          <div class="where">Управление: <code>PREFILTER</code> в <code>.env</code> (0 выключает), промпт <code>PREFILTER_INSTRUCTIONS</code> в <code>scoring.py</code>. Проверка правки: <code>cli eval prefilter</code></div>
+        </div>
+        <div class="meter"><div class="bar"><span></span></div><div class="nums"><span class="p">прошло 0</span><span class="r">отсеяно 0</span></div></div>
+      </div>
+
+      <div class="stage" data-stage="linkedin">
+        <div class="n sm">3б</div>
         <div>
           <div class="head"><h3>LinkedIn-проверка компании</h3><span class="cost">3 кредита ScrapeCreators, ничего не отсеивает</span></div>
           <ul>
@@ -472,7 +491,7 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
       <div class="stage" data-stage="sonnet">
         <div class="n">4</div>
         <div>
-          <div class="head"><h3>Sonnet ставит оценку 1–5</h3><span class="cost">≈ 1,5 цента</span></div>
+          <div class="head"><h3>Sonnet ставит оценку 1–5</h3><span class="cost">≈ 2 цента</span></div>
           <ul>
             <li>обязательные требования против фактов из файла опыта, без додумывания;</li>
             <li>направление: роль и домен. Грейды от middle до C-level подходят;</li>
@@ -492,7 +511,8 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
           <div class="head"><h3>Карточка в бот</h3><span class="cost">оценка 4 или 5</span></div>
           <ul>
             <li>всё ниже 4 остаётся в базе с причиной и попадает в /stats;</li>
-            <li>короткая карточка с выводом, доводами и кнопками, детали по «📋 Подробнее».</li>
+            <li>короткая карточка с выводом, доводами и кнопками, детали по «📋 Подробнее»;</li>
+            <li>под карточкой кнопка «📝 Подготовить отклик» (раздел 4а).</li>
           </ul>
           <div class="where">Порог: <code>MIN_SCORE</code> в <code>.env</code> (сейчас 4)</div>
         </div>
@@ -556,6 +576,50 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
       <p class="sub"><b>Название для LinkedIn.</b> Google по кириллице («Доксинбокс») ничего не находит, поэтому агент пробует до трёх написаний: латинскую часть названия, похожее латинское слово из текста, транслит. Для DocsInBox так нашлись 10 сотрудников, включая основателя.</p>
       <button class="btn" id="kbreset">Вернуть карточку в начало</button>
     </div>
+  </div>
+</section>
+
+<!-- 4а. Пакет отклика -->
+<section id="package">
+  <h2><span class="num">4а</span>Пакет отклика</h2>
+  <p class="sub">Пакет собирается только по нажатию «📝 Подготовить отклик» под новой карточкой. Заранее агент ничего не готовит и работодателю ничего не отправляет: резюме и письмо отправляете вы сами.</p>
+  <div class="loop">
+    <div class="step"><b>Карта требований</b>Sonnet: требование → номера фактов из файла опыта или «пробел»</div>
+    <div class="arrow">→</div>
+    <div class="step"><b>Резюме и письмо</b>Opus: каждое утверждение ссылается на номера фактов</div>
+    <div class="arrow">→</div>
+    <div class="step"><b>Проверка</b>код сверяет числа, названия, пробелы, тире, стоп-фразы; Haiku — смысл</div>
+    <div class="arrow">→</div>
+    <div class="step"><b>Одна пересборка</b>что не прошло и после неё, удаляется и попадает в сводку</div>
+    <div class="arrow">→</div>
+    <div class="step"><b>PDF на страницу</b>не влезает — сокращаются старые места работы</div>
+  </div>
+  <div class="two">
+    <div class="panel">
+      <h3>Что приходит в бот</h3>
+      <ul>
+        <li><b>PDF-резюме</b> документом: <code>Bachinin_Alexander_&lt;Company&gt;_&lt;Role&gt;.pdf</code>, без компании, если она скрыта.</li>
+        <li><b>Письмо</b> отдельным сообщением с темой сверху, чтобы скопировать одним касанием.</li>
+        <li><b>Сводка проверки</b>, только если есть что сказать: «убрал: MPSTATS, пункт 2 (number: 35)», «⚠️ проверь: …», «сократил под страницу: …».</li>
+        <li><b>«✏️ Переделать»</b> под последним сообщением: бот спрашивает, что поправить, и присылает новую версию. Правка не разрешает выдумку: «добавь Kubernetes» не пройдёт проверку фактов.</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h3>Правила сборки</h3>
+      <ul>
+        <li>Язык пакета — язык вакансии. Заголовок резюме только из позиционирований раздела «Профиль», CPO запрещён.</li>
+        <li>Места работы зависят от типа вакансии (builder, growth, product). AEZAKMI есть всегда, Clowe, Mediagram и Mir Mining не берутся никогда.</li>
+        <li>Название компании из вакансии не подтверждает факт: «Wildberries» в письме для Wildberries всё равно должно быть в процитированном факте.</li>
+        <li>Одна сборка за раз на весь сервис: повторное нажатие отвечает «Уже собираю».</li>
+        <li>Каждая версия хранится на сервере в <code>/opt/jobagent/data/packages/&lt;slug&gt;/v&lt;N&gt;/</code>: PDF, <code>resume.md</code>, <code>letter.md</code>, <code>experience_map.md</code> с честным списком пробелов, <code>check.json</code>.</li>
+        <li>В журнал не попадают тексты вакансии, резюме, письма и вашей правки, только коды и числа.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="facts">
+    <div class="panel"><span class="big">1–2 мин</span>от нажатия до PDF и письма в чате</div>
+    <div class="panel"><span class="big">/stats</span>собрано пакетов, переделок и средняя стоимость, включая неудачные сборки; основная часть — Opus</div>
+    <div class="panel"><span class="big">нет кнопки</span>если в <code>.env</code> не заданы <code>CANDIDATE_EMAIL</code> и <code>CANDIDATE_LINKEDIN</code> или в файле опыта ошибка разметки. Отбор вакансий при этом работает</div>
   </div>
 </section>
 
@@ -623,6 +687,8 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
         <tr><td><code>applied</code>, <code>skipped</code></td><td>ваше решение и причина</td></tr>
         <tr><td><code>interview</code>, <code>offer</code>, <code>rejected_by_employer</code></td><td>этап у работодателя</td></tr>
         <tr><td><code>error</code></td><td>вакансия трижды не обработалась, вам алерт</td></tr>
+        <tr><td><code>package_requested</code>, <code>package_redo</code></td><td>нажата «Подготовить отклик» или «Переделать»</td></tr>
+        <tr><td><code>package_ready</code>, <code>package_failed</code></td><td>пакет собран (что убрано, коды) или не собрался (код причины)</td></tr>
       </table>
     </div>
     <div class="panel">
@@ -659,6 +725,9 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
         <li><code>SCRAPECREATORS_API_KEY</code><span>LinkedIn-проверка, пусто значит выключена</span></li>
         <li><code>TRIAGE_MODEL</code>, <code>SCORING_MODEL</code>, <code>SCORING_EFFORT</code><span>модели и глубина рассуждения</span></li>
         <li><code>RECONCILE_HOURS</code>, <code>RECONCILE_PAGES</code><span>частота и глубина опроса</span></li>
+        <li><code>PREFILTER</code><span>Haiku по полному тексту, 0 выключает</span></li>
+        <li><code>PACKAGE_MODEL</code>, <code>PACKAGE_CHECK_MODEL</code><span>модели пакета отклика: Opus и Haiku</span></li>
+        <li><code>CANDIDATE_EMAIL</code>, <code>CANDIDATE_LINKEDIN</code>, <code>CANDIDATE_TELEGRAM</code><span>контакты в резюме и письме, без первых двух пакетов нет</span></li>
       </ul>
     </div>
     <div class="panel">
@@ -667,7 +736,9 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
       <ul>
         <li><code>rules.py</code><span>стоп-слова, грейды, исключения, украинский</span></li>
         <li><code>scoring.py</code><span>инструкции моделям и правила оценки</span></li>
-        <li><code>search_criteria.md</code><span>ваши критерии, стоп-факторы, методика RU-проверки</span></li>
+        <li><code>search_criteria.md</code><span>кто вы, ваши критерии, стоп-факторы, методика RU-проверки</span></li>
+        <li><code>package.py</code>, <code>package_rules.py</code><span>промпты пакета, состав мест работы, стоп-фразы</span></li>
+        <li><code>cover_letter_guide.md</code><span>правила сопроводительных</span></li>
         <li><code>experience/…Experience.md</code><span>факты для сверки требований</span></li>
         <li><code>applied_examples.md</code><span>образцы подходящих вакансий</span></li>
         <li><code>cards.py</code>, <code>bot.py</code><span>вид карточки, причины, кнопки</span></li>
@@ -677,6 +748,7 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
   <div class="cmd panel" style="margin-top:12px">
     <b>Проверить правку на одной вакансии</b>, ничего не записывая в базу и бот:
     <pre>cd "Agent Job Search/agent" && uv run python -m jobagent.cli dry-run &lt;vacancy_id&gt;</pre>
+    <b>Собрать пакет отклика локально</b>, без бота: <code>cli package &lt;vacancy_id&gt;</code>. Проверить промпт отсева до и после правки: <code>cli eval prefilter</code>.
     <div class="sim-note" style="margin-top:8px">Команда выкладки и работа с сервером описаны в HOW_IT_WORKS.md, раздел 5.</div>
   </div>
 </section>
@@ -703,13 +775,14 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
         <li><b>Примеры откликов</b> в <code>applied_examples.md</code> модель читает при каждой оценке. Это главный рычаг: чем больше ваших реальных откликов с пометкой, почему подошло, тем точнее оценка.</li>
         <li><b>Скрытие в Hirify:</b> пропущенная вакансия или компания больше не придёт.</li>
         <li><b>Сбор сигналов</b> для будущей калибровки.</li>
+        <li><b>Версии промптов и правил</b> в git, правка промпта проверяется <code>cli eval</code> до и после на уже оценённых вакансиях.</li>
       </ul>
     </div>
     <div class="panel">
       <h3>Запланировано</h3>
       <ul>
         <li>Анализ расхождений между оценкой агента и вашими решениями.</li>
-        <li>Версии промптов и правил с историей, чтобы сравнивать до и после.</li>
+        <li>Подбор порога и весов оценки по ответам работодателей.</li>
         <li>A/B-тест формулировок сопроводительных.</li>
         <li>Ответы работодателей из трекера Hirify и почты.</li>
       </ul>
@@ -720,11 +793,11 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
 <!-- 8. Дальше -->
 <section id="later">
   <h2><span class="num">8</span>Чего агент пока не делает</h2>
-  <p class="sub">Уже сделано 27.10: LinkedIn-проверка компании, кнопка «📇 Контакт», короткая карточка с «Подробнее», отсев вакансий на украинском.</p>
+  <p class="sub">Уже сделано: LinkedIn-проверка компании, кнопка «📇 Контакт», короткая карточка с «Подробнее», отсев вакансий на украинском, Haiku по полному тексту, пакет отклика.</p>
   <div class="panel">
     <table>
       <tr><th>Возможность</th><th>Когда</th></tr>
-      <tr><td>Резюме под вакансию, сопроводительное, карта опыта</td><td>MVP-2</td></tr>
+      <tr><td>Ответы на вопросы форм, <code>APPLY.md</code></td><td>Этап 5</td></tr>
       <tr><td>Ежедневная сводка, недельный отчёт, чтение статусов из трекера Hirify</td><td>Этап 3</td></tr>
       <tr><td>RU-проверка по сайту компании и hh.ru (LinkedIn уже есть)</td><td>Этап 4</td></tr>
       <tr><td>Поиск нанимающих в LinkedIn и готовые сообщения</td><td>Этап 4</td></tr>
@@ -739,7 +812,7 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
 <script>
 (function () {
   // ---------- Воронка ----------
-  var ORDER = ["rules", "haiku", "read", "linkedin", "sonnet", "bot"];
+  var ORDER = ["rules", "haiku", "read", "prefilter", "linkedin", "sonnet", "bot"];
   // li: true — LinkedIn-проверка нужна (англоязычная вакансия, компания не из России).
   var SAMPLES = [
     { t: "Product Director, Player Platform", c: "iGaming", stop: "sonnet", score: 1, why: "iGaming, стоп-фактор", real: true, li: true },
@@ -753,7 +826,7 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
     { t: "Growth Product Manager", c: "B2B SaaS", stop: null, score: 4, why: "growth и активация совпадают, в LinkedIn русскоязычные основатели", li: true },
     { t: "Product Owner, банк", c: "Банк", stop: "read", why: "опубликована 12 дней назад" },
     { t: "AI Product Manager", c: "", stop: "sonnet", score: 3, why: "на грани", real: true },
-    { t: "Product Analyst", c: "E-commerce", stop: "rules", why: "аналитика" },
+    { t: "Product Manager, гибрид в Москве", c: "Маркетплейс", stop: "prefilter", why: "гибрид без релокации" },
     { t: "Middle Performance Marketer (AI)", c: "", stop: "sonnet", score: 2, why: "middle performance, низкая ЗП", real: true },
     { t: "Product Manager", c: "EdTech", stop: "rules", why: "уже откликались" },
     { t: "Менеджер по продукту AI", c: "", stop: "sonnet", score: 3, why: "на грани", real: true }
@@ -845,7 +918,7 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
     play.textContent = "▶ Прогнать ещё раз";
   }
 
-  var NAMES = { rules: "правила", haiku: "Haiku", read: "полный текст", sonnet: "оценка" };
+  var NAMES = { rules: "правила", haiku: "Haiku", read: "полный текст", prefilter: "Haiku по тексту", sonnet: "оценка" };
   function addFeed(v, id) {
     var d = document.createElement("div");
     var title = esc(v.t) + (v.c ? " · " + esc(v.c) : "");
@@ -936,6 +1009,10 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
       }),
       btn("⏭ Пропустить", function () { note("Бот спрашивает: «Почему пропускаем?»", true); kbReasons(); })
     ));
+    kb.appendChild(row(btn("📝 Подготовить отклик", function () {
+      note("Через 1–2 минуты ответом на карточку приходят PDF-резюме, письмо отдельным сообщением и сводка проверки, если что-то убрано. " +
+        "Под ними кнопка «✏️ Переделать». Работодателю ничего не уходит. События <code>package_requested</code>, <code>package_ready</code>. Подробнее в разделе 4а.", true);
+    })));
   }
   function kbReasons() {
     redraw = kbReasons;
