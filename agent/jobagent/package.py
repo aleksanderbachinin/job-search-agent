@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, replace
@@ -299,6 +300,17 @@ def _is_letter_path(path: str) -> bool:
     return path == "letter" or path.startswith(("letter.", "letter["))
 
 
+# Нарушения, ради которых пересборка не нужна: предупреждение в итоге и так будет.
+# Тире и стоп-фразы в письме пересборку запускают: их модель должна исправить сама.
+_WARNING_ONLY = frozenset({"length", "bullets"})
+
+
+def _needs_retry(x: Violation) -> bool:
+    if x.code in _WARNING_ONLY:
+        return False
+    return not (x.code == "title" and _is_letter_path(x.path))
+
+
 def _semantic_claims(resume: ResumeDraft, letter: LetterDraft) -> list[tuple[str, Claim]]:
     """Утверждения для проверки смысла: всё с номерами фактов, все предложения письма и
     утверждения письма без номеров (тема, финал)."""
@@ -471,6 +483,10 @@ class PackageBuilder:
         for verdict in result.items:
             if not verdict.ok and 0 <= verdict.index < len(claims):
                 violations.append(Violation(claims[verdict.index][0], "semantic", verdict.reason_code))
+        # Пропущенное утверждение не считается проверенным, но и не убирается: только предупреждение.
+        missing = len(set(range(len(claims))) - {v.index for v in result.items})
+        if missing:
+            warnings.append(f"⚠️ проверь: проверка смысла не ответила по {missing} утверждениям")
         return violations, usage
 
     # ---------- сборка ----------
@@ -515,14 +531,17 @@ class PackageBuilder:
         violations, u = await self._check(ctx, resume, letter, warnings)
         usage.append(("package_check", u))
 
-        if violations:
+        resume_v = [x for x in violations if not _is_letter_path(x.path)]
+        letter_v = [x for x in violations if _is_letter_path(x.path)]
+        # Пересобирается часть, где есть что исправлять; одни предупреждения идут сразу в итог.
+        retry_resume = any(_needs_retry(x) for x in resume_v)
+        retry_letter = any(_needs_retry(x) for x in letter_v)
+        if retry_resume or retry_letter:
             log.info("пакет %s: пересборка, нарушения %s", v.slug, ", ".join(sorted({x.code for x in violations})))
-            resume_v = [x for x in violations if not _is_letter_path(x.path)]
-            letter_v = [x for x in violations if _is_letter_path(x.path)]
-            if resume_v:
+            if retry_resume:
                 resume, u = await self._resume(ctx, (resume, resume_v))
                 usage.append(("package_resume", u))
-            if letter_v:
+            if retry_letter:
                 letter, u = await self._letter(ctx, resume, (letter, letter_v))
                 usage.append(("package_letter", u))
             warnings.clear()
@@ -533,7 +552,10 @@ class PackageBuilder:
         warnings += left
 
         contacts = replace(self.contacts, location_line=LOCATION_LINE[lang])
-        resume, pdf, cut_steps = fit_one_page(resume, self.fb, contacts, lang, req_map.role_type)
+        # Вёрстка reportlab синхронная и долгая: в потоке, чтобы не держать бота и вебхуки.
+        resume, pdf, cut_steps = await asyncio.to_thread(
+            fit_one_page, resume, self.fb, contacts, lang, req_map.role_type
+        )
         log.info(
             "пакет %s: убрано %d, предупреждений %d, подгонка %s",
             v.slug, len(removed), len(warnings), ", ".join(cut_steps) or "нет",

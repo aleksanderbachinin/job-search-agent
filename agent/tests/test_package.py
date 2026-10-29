@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import shutil
+import threading
 
 import anthropic
 import httpx2
@@ -12,6 +13,7 @@ import pytest
 from jobagent.config import AGENT_DIR
 from jobagent.db import Vacancy
 from jobagent.facts import parse_facts
+from jobagent import package
 from jobagent.package import PackageBuilder, render_letter
 from jobagent.pdf import Contacts, PackageError
 from test_pdf import B
@@ -197,9 +199,6 @@ def letter(subject: str = "AI Product Builder at Acme", salutation: str = "Dear 
     }
 
 
-CHECK_OK = {"items": []}
-
-
 def sent_claims(body: dict) -> list[dict]:
     return json.loads(re.search(r"<claims>\n(.*)\n</claims>", user_text(body), re.S).group(1))
 
@@ -215,6 +214,10 @@ def check_rejects(prefix: str, reason: str = "role_inflated"):
         ]}
 
     return respond
+
+
+# Проверка смысла отвечает «ok» по каждому утверждению.
+CHECK_OK = check_rejects("\x00")
 
 
 def builder(client, knowledge_dir) -> PackageBuilder:
@@ -805,3 +808,50 @@ async def test_english_letter_for_russian_vacancy_fails(fb_dir):
         await builder(client, fb_dir).build(vacancy(vacancy_language="ru"))
     assert err.value.code == "language"
     assert [kind(b) for b in bodies(captured)] == ["map", "resume", "letter", "check", "letter", "check"]
+
+
+# ---------- F9, F11, F12: сборщик ----------
+
+
+async def test_semantic_check_missing_indices_become_warning(fb_dir):
+    captured: list = []
+    client = queue_client(captured, [
+        (MAP, MAP_MODEL), (resume(), GEN_MODEL), (letter(), GEN_MODEL),
+        ({"items": [{"index": 0, "ok": True, "reason_code": "ok"}]}, CHECK_MODEL),
+    ])
+    pkg, _ = await builder(client, fb_dir).build(vacancy())
+    total = len(sent_claims(bodies(captured)[3]))
+    assert total > 1
+    assert pkg.warnings == [f"⚠️ проверь: проверка смысла не ответила по {total - 1} утверждениям"]
+    assert pkg.removed == []
+    assert len(pkg.resume.jobs[0].bullets) == 3
+
+
+async def test_warning_only_violations_do_not_trigger_retry(fb_dir):
+    # В письме нет названия роли (title), у VIBE два пункта (bullets): только предупреждения.
+    captured: list = []
+    no_role = letter(subject="Your agent platform at Acme")
+    no_role["sentences"][0]["text"] = "Acme builds AI agents, and your platform is close to what I built last year."
+    short = resume(only={"VIBE": [claim(B["VIBE"][0].text, *B["VIBE"][0].facts),
+                                  claim(B["VIBE"][2].text, *B["VIBE"][2].facts)]})
+    client = queue_client(captured, [
+        (MAP, MAP_MODEL), (short, GEN_MODEL), (no_role, GEN_MODEL), (CHECK_OK, CHECK_MODEL),
+    ])
+    pkg, _ = await builder(client, fb_dir).build(vacancy())
+    assert [kind(b) for b in bodies(captured)] == ["map", "resume", "letter", "check"]
+    assert "⚠️ проверь: нет названия роли" in pkg.warnings
+    assert any("у VIBE пунктов 2" in w for w in pkg.warnings)
+    assert pkg.removed == []
+
+
+async def test_fit_one_page_runs_off_the_event_loop(fb_dir, monkeypatch):
+    threads = []
+    real = package.fit_one_page
+
+    def spy(*args, **kwargs):
+        threads.append(threading.get_ident())
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(package, "fit_one_page", spy)
+    await build_happy(fb_dir)
+    assert threads and threads[0] != threading.get_ident()
