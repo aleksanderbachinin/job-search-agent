@@ -46,7 +46,7 @@ class Settings:
     candidate_email: str = ""
     candidate_linkedin: str = ""
     candidate_telegram: str = ""
-    min_score: int = 4
+    min_score: int = 3
     max_age_days: int = 7
     reconcile_hours: float = 12.0
     reconcile_pages: int = 2

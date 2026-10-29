@@ -199,7 +199,7 @@ async def test_compare_refuses_runs_of_different_steps(tmp_path):
 
 async def test_scoring_matrix_and_mean_diff(tmp_path):
     scores = {"1-applied-low": 5, "2-top": 3, "3-four": 4, "4-skipped": 4, "5-mid": 4, "6-low": 2, "7-one": 1}
-    result = await run(tmp_path, "scoring", FakeScorer(scores=scores), limit=30)
+    result = await run(tmp_path, "scoring", FakeScorer(scores=scores), limit=30, min_score=4)
     summary = result["summary"]
     # Старые: 4→5, 5→3, 4→4, 4→4, 3→4, 2→2, 1→1. Без оценки (8-stale) не берём.
     assert summary["matrix"] == {"1": {"1": 1}, "2": {"2": 1}, "3": {"4": 1}, "4": {"4": 2, "5": 1}, "5": {"3": 1}}
