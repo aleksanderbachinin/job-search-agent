@@ -161,7 +161,7 @@ def false_rejections(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [i for i in items if rejected(i) and i["bucket"] in GOOD_BUCKETS]
 
 
-def summarize(step: str, items: list[dict[str, Any]], min_score: int = 3) -> dict[str, Any]:
+def summarize(step: str, items: list[dict[str, Any]], min_score: int = 4) -> dict[str, Any]:
     errors = sum(1 for i in items if i["error"])
     if step in FILTER_STEPS:
         buckets = {b: {"total": 0, "rejected": 0} for b in BUCKETS}
@@ -238,7 +238,7 @@ async def run_eval(
     out_dir: Path,
     limit: int | None = None,
     concurrency: int = CONCURRENCY,
-    min_score: int = 3,
+    min_score: int = 4,
     only: set[str] | None = None,
 ) -> dict[str, Any]:
     """Прогоняет шаг по снимку, сохраняет результат в out_dir и возвращает его (с ключом path).

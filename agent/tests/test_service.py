@@ -9,7 +9,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from jobagent import rules
-from jobagent.config import Settings
 from jobagent.cards import DETAILS_HEADER, posted_ago, render_card, render_full, render_stats
 from jobagent.db import Database, vacancy_id_from_slug
 from jobagent.ingest import verify_signature, webhook_router
@@ -244,9 +243,7 @@ class FakeSink:
 async def run_one(db, scorer, d=None, prefilter=True):
     await db.upsert_card(CARD, [{"id": 1, "name": "PM remote"}], source="webhook")
     hirify, sink = FakeHirify(d or detail()), FakeSink()
-    p = Pipeline(
-        db, hirify, scorer, sink, min_score=Settings().min_score, max_age_days=7, prefilter=prefilter
-    )
+    p = Pipeline(db, hirify, scorer, sink, min_score=4, max_age_days=7, prefilter=prefilter)
     await p.process_safely(await db.next_queued())
     return await db.get(CARD["slug"]), hirify, sink
 
@@ -289,14 +286,9 @@ async def test_pipeline_logs_cache_writes(db):
     assert steps["prefilter"]["cache_write_tokens"] == 0 and "cache_write_tokens" in steps["scoring"]
 
 
-async def test_pipeline_shows_borderline_score(db):
-    v, _, sink = await run_one(db, FakeScorer(score=3))
-    assert v.status == "shown" and v.score == 3 and len(sink.cards) == 1
-
-
 async def test_pipeline_low_score_rejected(db):
-    v, _, sink = await run_one(db, FakeScorer(score=2))
-    assert v.status == "rejected" and v.stage == "score" and v.reason.startswith("2/5")
+    v, _, sink = await run_one(db, FakeScorer(score=3))
+    assert v.status == "rejected" and v.stage == "score" and v.reason.startswith("3/5")
     assert not sink.cards
 
 

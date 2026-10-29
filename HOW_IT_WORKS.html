@@ -254,7 +254,7 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
   <p class="lead">Агент получает новые вакансии из ваших шести фильтров Hirify, отсеивает неподходящие, для англоязычных вакансий проверяет команду компании в LinkedIn и присылает остальные в Telegram-бот @alexsearchjob_bot. По кнопке под карточкой он собирает PDF-резюме и сопроводительное письмо под вакансию, отправляете их вы сами.</p>
 
   <div class="keypoints">
-    <div class="panel"><h3>Шесть ступеней отсева</h3><p>От бесплатной к самой дорогой: правила, Haiku по карточке, полный текст, Haiku по тексту, Sonnet, плюс LinkedIn-проверка перед оценкой. В бот попадают вакансии с оценкой 3, 4 и 5 из 5.</p></div>
+    <div class="panel"><h3>Шесть ступеней отсева</h3><p>От бесплатной к самой дорогой: правила, Haiku по карточке, полный текст, Haiku по тексту, Sonnet, плюс LinkedIn-проверка перед оценкой. В бот попадают только вакансии с оценкой 4 и 5 из 5.</p></div>
     <div class="panel"><h3>Ничего не уходит работодателю</h3><p>Откликаетесь вы сами. Агент читает вакансии, пишет ваши решения в трекер Hirify, скрывает пропущенные. Контакт раскрывает и пакет отклика собирает только по вашей кнопке.</p></div>
     <div class="panel"><h3>Самообучения пока нет</h3><p>Агент копит ваши решения с причинами. На отбор влияете вы: правками файлов и примерами откликов.</p></div>
   </div>
@@ -508,13 +508,13 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
       <div class="stage" data-stage="bot">
         <div class="n">5</div>
         <div>
-          <div class="head"><h3>Карточка в бот</h3><span class="cost">оценка 3, 4 или 5</span></div>
+          <div class="head"><h3>Карточка в бот</h3><span class="cost">оценка 4 или 5</span></div>
           <ul>
-            <li>всё ниже 3 остаётся в базе с причиной и попадает в /stats;</li>
+            <li>всё ниже 4 остаётся в базе с причиной и попадает в /stats;</li>
             <li>короткая карточка с выводом, доводами и кнопками, детали по «📋 Подробнее»;</li>
             <li>под карточкой кнопка «📝 Подготовить отклик» (раздел 4а).</li>
           </ul>
-          <div class="where">Порог: <code>MIN_SCORE</code> в <code>.env</code> (сейчас 3)</div>
+          <div class="where">Порог: <code>MIN_SCORE</code> в <code>.env</code> (сейчас 4)</div>
         </div>
         <div class="meter"><div class="bar"><span></span></div><div class="nums"><span class="p">показано 0</span><span class="r"></span></div></div>
       </div>
@@ -532,7 +532,7 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
     <div class="timeline">
       <div class="a"><b>1–2,5 мин</b><small>Hirify присылает вебхук. Задержка на их стороне</small></div>
       <div class="b"><b>≈ 10 с</b><small>Агент оценивает. LinkedIn-проверка, если нужна, добавляет время</small></div>
-      <div class="c"><b>Карточка</b><small>если 3, 4 или 5</small></div>
+      <div class="c"><b>Карточка</b><small>если 4 или 5</small></div>
     </div>
     <div class="facts">
       <div class="panel"><span class="big">≈ 2–3 мин</span>обычно от публикации до решения агента</div>
@@ -719,7 +719,7 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
       <span class="badge restart">Перезапуск сервиса</span>
       <div class="how">Настройки в <code>.env</code> на сервере</div>
       <ul>
-        <li><code>MIN_SCORE</code> = 3<span>порог показа в бот</span></li>
+        <li><code>MIN_SCORE</code> = 4<span>порог показа в бот</span></li>
         <li><code>MAX_AGE_DAYS</code> = 7<span>максимальный возраст вакансии</span></li>
         <li><code>HIRIFY_FEED_IDS</code><span>какие фильтры слушать, пусто значит все активные</span></li>
         <li><code>SCRAPECREATORS_API_KEY</code><span>LinkedIn-проверка, пусто значит выключена</span></li>
