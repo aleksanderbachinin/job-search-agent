@@ -17,6 +17,7 @@ from fastapi import FastAPI
 from .bot import Notifier, make_bot, make_dispatcher
 from .config import AGENT_DIR, Settings
 from .db import Database
+from .facts import FactFileError
 from .hirify import HirifyClient
 from .ingest import reconcile_forever, webhook_router
 from .package import PackageBuilder
@@ -65,8 +66,17 @@ def make_package_builder(settings: Settings, client: anthropic.AsyncAnthropic | 
 
 
 def make_package_runner(settings: Settings, bot: Bot | None, db: Database) -> PackageRunner | None:
-    """Сборка пакетов по кнопке в боте; None — кнопки нет."""
-    builder = make_package_builder(settings)
+    """Сборка пакетов по кнопке в боте; None — кнопки нет.
+
+    Ошибка разметки файла опыта выключает только пакеты: отбор вакансий работает дальше.
+    В журнал идёт только класс ошибки, в её тексте цитата из файла опыта. Команды `cli package`
+    её не ловят: в консоли нужен полный текст, чтобы найти место в файле.
+    """
+    try:
+        builder = make_package_builder(settings)
+    except FactFileError as err:
+        log.warning("Пакеты отклика выключены: ошибка разметки файла опыта (%s)", type(err).__name__)
+        return None
     if builder is None:
         return None
     store = PackageStore(db, settings.packages_dir, builder.fb, builder.contacts)
