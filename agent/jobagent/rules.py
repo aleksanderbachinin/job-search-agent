@@ -15,6 +15,10 @@ UKRAINIAN_LETTERS = re.compile(r"[іїєґІЇЄҐ]")
 CYRILLIC = re.compile(r"[а-яёА-ЯЁіїєґІЇЄҐ]")
 UKRAINIAN_SHARE = 0.02
 
+# Стоп-фактор с 2026-11-03: вилка в рублях, верх которой ниже 250 тыс. в месяц. Нет верха —
+# сравниваем низ («от 150 000»). Другие валюты не трогаем: там месячные и годовые вилки вперемешку.
+MIN_SALARY_RUB = 250_000
+
 # Роли, которые точно не про Александра, даже если в названии есть «product».
 HARD_REJECT = re.compile(
     r"product\s+design|продуктов\w*\s+дизайн|product\s+analyst|продуктов\w*\s+аналитик"
@@ -46,6 +50,17 @@ def is_ukrainian(vacancy: dict[str, Any]) -> bool:
     return cyrillic >= 20 and len(UKRAINIAN_LETTERS.findall(text)) / cyrillic > UKRAINIAN_SHARE
 
 
+def low_salary(vacancy: dict[str, Any]) -> int | None:
+    """Верх рублёвой вилки, если он ниже MIN_SALARY_RUB, иначе None."""
+    salary = vacancy.get("salary")
+    if not isinstance(salary, dict) or salary.get("currency") != "RUB":
+        return None
+    top = salary.get("max") or salary.get("min")
+    if not isinstance(top, (int, float)) or isinstance(top, bool):
+        return None
+    return int(top) if 0 < top < MIN_SALARY_RUB else None
+
+
 def check_card(card: dict[str, Any]) -> str | None:
     """Причина отказа по карточке или None, если карточку стоит смотреть дальше."""
     if card.get("has_applied"):
@@ -57,6 +72,8 @@ def check_card(card: dict[str, Any]) -> str | None:
         return f"грейд: {', '.join(sorted(grades))}"
     if is_ukrainian(card):
         return "вакансия на украинском"
+    if top := low_salary(card):
+        return f"зарплата до {top:,} ₽, ниже {MIN_SALARY_RUB:,} ₽".replace(",", " ")
     title = card.get("title") or ""
     if HARD_REJECT.search(title):
         return f"роль не по профилю: {title}"

@@ -422,10 +422,11 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
             <li>уже откликались через Hirify или вакансия уже в трекере;</li>
             <li>все грейды из trainee, intern, junior (junior + middle проходит);</li>
             <li>вакансия на украинском: разметка Hirify <code>ua</code> или буквы і, ї, є, ґ больше 2% кириллицы (с 27.10);</li>
+            <li>вилка в рублях с верхом ниже 250 000 ₽ в месяц; без верха сравнивается низ, другие валюты не проверяются;</li>
             <li>дизайнер продукта, продуктовый или data-аналитик, data scientist, UX/UI;</li>
             <li>developer, engineer, QA, DevOps, HR, sales, support, SMM, юрист и т.п., если в названии нет product, PM, PO, growth, marketing, CPO, builder. «AI Product Engineer» проходит, «Backend Engineer» нет.</li>
           </ul>
-          <div class="where">Управление: <code>JUNIOR_GRADES</code>, <code>HARD_REJECT</code>, <code>KEEP</code>, <code>STOP</code> в <code>rules.py</code></div>
+          <div class="where">Управление: <code>JUNIOR_GRADES</code>, <code>HARD_REJECT</code>, <code>KEEP</code>, <code>STOP</code>, <code>MIN_SALARY_RUB</code> в <code>rules.py</code></div>
         </div>
         <div class="meter"><div class="bar"><span></span></div><div class="nums"><span class="p">прошло 0</span><span class="r">отсеяно 0</span></div></div>
       </div>
@@ -450,6 +451,7 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
           <ul>
             <li>агент открывает вакансию в Hirify и ещё раз проверяет, не откликались ли вы;</li>
             <li>повторная проверка на украинский язык, уже по полному тексту;</li>
+            <li>компания, которую вы раньше пропустили с причиной «Компания неинтересна», отсеивается: Hirify скрывает её, но вакансии из очереди всё равно доходят. Перед отправкой карточки проверка повторяется;</li>
             <li>вакансия старше 7 дней отсеивается.</li>
           </ul>
           <div class="where">Управление: <code>MAX_AGE_DAYS</code> в <code>.env</code></div>
@@ -498,7 +500,7 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
             <li>условия: ЗП, гео, формат, релокация, язык. Цифра без валюты или периода считается вопросом;</li>
             <li>стоп-факторы из критериев: одно попадание означает вето;</li>
             <li>сигналы мошенничества;</li>
-            <li>RU-метка по тексту и данным LinkedIn: ✅ явно, 🟡 косвенно, ❓ компания скрыта, ❌ иностранная. На оценку сама не влияет, решение за вами.</li>
+            <li>RU-метка по тексту и данным LinkedIn: ✅ явно, 🟡 косвенно, ❓ компания скрыта, ❌ иностранная. Вакансия с ❌ в бот не приходит при любой оценке.</li>
           </ul>
           <div class="where">Опирается на <code>search_criteria.md</code>, <code>experience/Bachinin_Alexander_Experience.md</code> (без пунктов «Не засчитывать») и <code>applied_examples.md</code>. Правила оценки: <code>SCORING_INSTRUCTIONS</code></div>
         </div>
@@ -697,7 +699,7 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
       <ul>
         <li>Кнопки «Откликнулся» и этапы записываются в трекер на hirify.me.</li>
         <li>Обратно агент пока не читает: этап, отмеченный на сайте, в <code>/stats</code> не попадёт.</li>
-        <li>Пропуск скрывает вакансию в Hirify. С причиной «Компания неинтересна» скрываются все вакансии компании.</li>
+        <li>Пропуск скрывает вакансию в Hirify. С причиной «Компания неинтересна» скрываются все вакансии компании, а другие её карточки в чате без решения помечаются пропущенными.</li>
       </ul>
     </div>
   </div>
@@ -735,7 +737,7 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
       <span class="badge deploy">Выкладка на сервер</span>
       <div class="how">Файлы в папке «Agent Job Search»</div>
       <ul>
-        <li><code>rules.py</code><span>стоп-слова, грейды, исключения, украинский</span></li>
+        <li><code>rules.py</code><span>стоп-слова, грейды, исключения, украинский, порог зарплаты</span></li>
         <li><code>scoring.py</code><span>инструкции моделям и правила оценки</span></li>
         <li><code>search_criteria.md</code><span>кто вы, ваши критерии, стоп-факторы, методика RU-проверки</span></li>
         <li><code>package.py</code>, <code>package_rules.py</code><span>промпты пакета, состав мест работы, стоп-фразы</span></li>

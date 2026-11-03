@@ -189,6 +189,28 @@ def test_ukrainian_vacancy_rejected():
     assert rules.check_detail(detail(description="Product Manager, Kyiv office"), 7) is None
 
 
+@pytest.mark.parametrize(
+    "salary,rejected",
+    [
+        ({"currency": "RUB", "min": 120000, "max": 220000}, True),
+        ({"currency": "RUB", "min": 150000, "max": None}, True),
+        ({"currency": "RUB", "min": 200000, "max": 250000}, False),
+        ({"currency": "RUB", "min": 250000, "max": None}, False),
+        ({"currency": "RUB", "min": None, "max": None}, False),
+        ({"currency": "RUB", "min": None, "max": 160000}, True),
+        ({"currency": "RUB", "min": "150000", "max": None}, False),
+        ({"currency": "USD", "min": 150, "max": 225}, False),
+        ("150000 RUB", False),
+        (None, False),
+    ],
+)
+def test_low_rub_salary_rejected(salary, rejected):
+    reason = rules.check_card({**CARD, "salary": salary})
+    assert (reason is not None) == rejected
+    if rejected:
+        assert reason.startswith("зарплата до ")
+
+
 def test_stale_detail():
     old = (datetime.now(UTC) - timedelta(days=30)).isoformat().replace("+00:00", "Z")
     assert rules.check_detail(detail(created_at=old), 7)[0] == "stale"
@@ -290,6 +312,47 @@ async def test_pipeline_low_score_rejected(db):
     v, _, sink = await run_one(db, FakeScorer(score=3))
     assert v.status == "rejected" and v.stage == "score" and v.reason.startswith("3/5")
     assert not sink.cards
+
+
+async def test_pipeline_foreign_team_rejected_even_with_high_score(db):
+    class Foreign(FakeScorer):
+        async def assess(self, d, feeds):
+            self.assessed += 1
+            return assessment(5).model_copy(update={"ru_label": "foreign"}), Usage("sonnet", 5000, 400, 4000)
+
+    v, _, sink = await run_one(db, Foreign())
+    assert v.status == "rejected" and v.stage == "foreign" and v.score == 5
+    assert not sink.cards
+
+
+async def test_pipeline_rejects_company_skipped_before(db):
+    other = {**CARD, "slug": "1000-other", "vacancy_id": 1000}
+    await db.upsert_card(other, [], source="webhook")
+    await db.update(other["slug"], status="skipped", reason="company", company="REMOTERIA ")
+    scorer = FakeScorer(score=5)
+    v, hirify, sink = await run_one(db, scorer)
+    assert v.status == "rejected" and v.stage == "company"
+    assert hirify.reads == 1 and scorer.assessed == 0 and not sink.cards
+
+
+async def test_pipeline_drops_card_when_company_skipped_during_scoring(db):
+    class SkipWhileScoring(FakeScorer):
+        async def assess(self, d, feeds):
+            other = {**CARD, "slug": "1000-other", "vacancy_id": 1000}
+            await db.upsert_card(other, [], source="webhook")
+            await db.update(other["slug"], status="skipped", reason="company", company="Remoteria")
+            return await super().assess(d, feeds)
+
+    v, _, sink = await run_one(db, SkipWhileScoring(score=5))
+    assert v.status == "rejected" and v.stage == "company" and not sink.cards
+
+
+async def test_pipeline_other_skip_reasons_do_not_block_company(db):
+    other = {**CARD, "slug": "1000-other", "vacancy_id": 1000}
+    await db.upsert_card(other, [], source="webhook")
+    await db.update(other["slug"], status="skipped", reason="role", company="Remoteria")
+    v, _, _ = await run_one(db, FakeScorer(score=5))
+    assert v.status == "shown"
 
 
 async def test_pipeline_error_retries_then_alerts(db):

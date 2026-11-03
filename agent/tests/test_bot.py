@@ -228,6 +228,55 @@ async def test_skip_company_reason_hides_whole_company_not_just_vacancy(db, h, h
     assert h.keyboard[0] == ("⏭ Пропущено: Компания неинтересна", "nop")
 
 
+async def test_skip_company_closes_other_open_cards_of_that_company(db, h, hirify):
+    await shown(db, company="TripleTen")
+    for i, (company, status) in enumerate([("tripleten", "shown"), ("TripleTen", "applied"), ("Other", "shown")]):
+        card = {**CARD, "slug": f"{i}-x", "vacancy_id": i}
+        await db.upsert_card(card, [], source="webhook", status=status)
+        await db.update(card["slug"], company=company, tg_message_id=500 + i)
+    await h.press(f"sr:{VID}:company")
+
+    statuses = {s: (await db.get(s)).status for s in ("0-x", "1-x", "2-x")}
+    assert statuses == {"0-x": "skipped", "1-x": "applied", "2-x": "shown"}
+    assert (await db.get("0-x")).reason == "company"
+    assert hirify.calls == [("hide_company", {"slug": SLUG})]
+    (other_edit,) = [m for m in h.sent(EditMessageReplyMarkup) if m.message_id == 500]
+    assert other_edit.reply_markup.inline_keyboard[0][0].text == "⏭ Пропущено: Компания неинтересна"
+    assert h.answer.text.endswith(": 1")
+
+
+async def test_skip_company_survives_failed_edit_and_cards_without_message(db, h, hirify):
+    from aiogram.exceptions import TelegramBadRequest
+
+    await shown(db, company="TripleTen")
+    for i, message_id in enumerate([None, 501]):
+        card = {**CARD, "slug": f"{i}-x", "vacancy_id": i}
+        await db.upsert_card(card, [], source="webhook", status="shown")
+        await db.update(card["slug"], company="TripleTen", tg_message_id=message_id)
+    real = h.session.make_request
+
+    async def failing(bot, method, timeout=None):
+        if isinstance(method, EditMessageReplyMarkup) and method.message_id == 501:
+            raise TelegramBadRequest(method, "message to edit not found")
+        return await real(bot, method, timeout)
+
+    h.session.make_request = failing
+    await h.press(f"sr:{VID}:company")
+
+    assert [(await db.get(s)).status for s in ("0-x", "1-x")] == ["skipped", "skipped"]
+    assert h.answer.text.endswith(": 2")
+
+
+async def test_skip_company_without_company_name_closes_nothing_else(db, h, hirify):
+    await shown(db)
+    card = {**CARD, "slug": "0-x", "vacancy_id": 0}
+    await db.upsert_card(card, [], source="webhook", status="shown")
+    await h.press(f"sr:{VID}:company")
+
+    assert (await db.get("0-x")).status == "shown"
+    assert h.answer.text == "Пропустил и скрыл все вакансии компании в Hirify"
+
+
 @pytest.mark.parametrize("code", ["role", "terms", "ru", "other"])
 async def test_skip_other_reasons_hide_only_the_vacancy(db, h, hirify, code):
     await shown(db)

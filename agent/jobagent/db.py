@@ -3,7 +3,7 @@
 Статусы вакансии:
   queued   — ждёт обработки воркером;
   baseline — была в фильтре до первого запуска, не оценивается;
-  rejected — отсеяна (stage: already / rules / triage / stale / prefilter / score);
+  rejected — отсеяна (stage: already / rules / triage / stale / company / prefilter / score / foreign);
   shown    — карточка отправлена в бот;
   applied  — Александр откликнулся;
   skipped  — Александр пропустил (reason — причина);
@@ -80,6 +80,10 @@ PACKAGE_FIELDS = {"status", "path", "tg_message_id"}
 
 def now_iso() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def company_key(name: str) -> str:
+    return name.strip().casefold()
 
 
 def vacancy_id_from_slug(slug: str) -> int | None:
@@ -247,6 +251,23 @@ class Database:
         ) as cur:
             row = await cur.fetchone()
         return Vacancy.from_row(row) if row else None
+
+    async def skipped_companies(self) -> set[str]:
+        """Компании, пропущенные с причиной «Компания неинтересна», через casefold.
+        Сравниваем в Python: lower() в SQLite не трогает кириллицу."""
+        async with self.conn.execute(
+            "SELECT DISTINCT company FROM vacancies"
+            " WHERE status = 'skipped' AND reason = 'company' AND company IS NOT NULL"
+        ) as cur:
+            return {company_key(row[0]) async for row in cur}
+
+    async def shown_of_company(self, company: str) -> list[Vacancy]:
+        """Карточки этой компании, по которым ещё нет решения."""
+        async with self.conn.execute(
+            "SELECT * FROM vacancies WHERE status = 'shown' AND company IS NOT NULL ORDER BY created_at"
+        ) as cur:
+            rows = [Vacancy.from_row(row) async for row in cur]
+        return [v for v in rows if company_key(v.company or "") == company_key(company)]
 
     async def update(self, slug: str, **fields: Any) -> None:
         if not fields:

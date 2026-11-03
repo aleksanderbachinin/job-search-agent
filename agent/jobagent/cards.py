@@ -259,7 +259,9 @@ def render_stats(
         "triage": "быстрая модель по карточке",
         "stale": "старые",
         "prefilter": "быстрая модель по тексту",
+        "company": "компания пропущена раньше",
         "score": "оценка ниже порога",
+        "foreign": "иностранная команда",
     }
     lines = [f"<b>Воронка {escape(period)}</b>", f"Получено: {received}"]
     total_rejected = sum(rejected.values())

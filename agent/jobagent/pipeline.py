@@ -10,7 +10,7 @@ from typing import Protocol
 import anthropic
 
 from . import rules
-from .db import Database, Vacancy
+from .db import Database, Vacancy, company_key
 from .hirify import HirifyClient, HirifyError
 from .research import skip_reason
 from .scoring import Scorer, ScoringError
@@ -111,6 +111,9 @@ class Pipeline:
         await self.db.log_event("rejected", v.slug, stage=stage, reason=reason)
         log.info("rejected [%s] %s: %s", stage, v.title, reason)
 
+    async def company_skipped(self, company: str | None) -> bool:
+        return bool(company) and company_key(company) in await self.db.skipped_companies()
+
     async def process(self, v: Vacancy) -> None:
         if reason := rules.check_card(v.card):
             stage = "already" if "откликался" in reason or "трекере" in reason else "rules"
@@ -124,9 +127,13 @@ class Pipeline:
         if v.vacancy_id is None:
             raise ValueError(f"Нет vacancy_id для {v.slug}")
         detail = await self.hirify.read_vacancy(v.vacancy_id)
-        await self.db.update(v.slug, detail=detail, company=detail.get("company"))
+        company = detail.get("company")
+        await self.db.update(v.slug, detail=detail, company=company)
         if rejection := rules.check_detail(detail, self.max_age_days):
             return await self.reject(v, *rejection)
+        # Hirify скрывает компанию после пропуска, но вакансии, уже стоящие в очереди, доходят сюда.
+        if await self.company_skipped(company):
+            return await self.reject(v, "company", f"компания {company} пропущена как неинтересная")
 
         # До LinkedIn и Sonnet: явные стоп-факторы дешевле отсечь Haiku по тексту.
         if self.prefilter:
@@ -152,6 +159,13 @@ class Pipeline:
         await self.db.update(v.slug, assessment=a, score=assessment.score)
         if assessment.score < self.min_score:
             return await self.reject(v, "score", f"{assessment.score}/5: {assessment.verdict}")
+        # Стоп-фактор: на иностранные команды Александр не откликается при любой оценке.
+        if assessment.ru_label == "foreign":
+            return await self.reject(v, "foreign", f"{assessment.score}/5, иностранная команда: {assessment.ru_summary}")
+
+        # Ещё раз: пока шла оценка, Александр мог пропустить другую карточку этой компании.
+        if await self.company_skipped(company):
+            return await self.reject(v, "company", f"компания {company} пропущена как неинтересная")
 
         fresh = await self.db.get(v.slug)
         assert fresh is not None

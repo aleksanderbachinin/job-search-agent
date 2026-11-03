@@ -7,6 +7,7 @@ import logging
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -273,6 +274,23 @@ def build_router(db: Database, hirify: HirifyClient, owner_id: int, package_butt
         await db.log_event("skipped", v.slug, reason=code)
         label = f"⏭ Пропущено: {SKIP_REASONS.get(code, code)}"
         await cb.message.edit_reply_markup(reply_markup=kb_status(v, label, False, is_expanded(cb.message)))
+        # Компания приходит пачкой: остальные её карточки без решения закрываем тем же нажатием.
+        if code == "company" and v.company:
+            others = await db.shown_of_company(v.company)
+            for other in others:
+                await db.update(other.slug, status="skipped", reason=code)
+                await db.log_event("skipped", other.slug, reason=code, with_slug=v.slug)
+                if other.tg_message_id:
+                    try:
+                        await cb.bot.edit_message_reply_markup(
+                            chat_id=cb.message.chat.id,
+                            message_id=other.tg_message_id,
+                            reply_markup=kb_status(other, label, False),
+                        )
+                    except TelegramAPIError as e:
+                        log.warning("edit failed for %s: %s", other.slug, e)
+            if others:
+                note += f". Другие её карточки в чате тоже пропущены: {len(others)}"
         await cb.answer(note)
 
     @router.callback_query(F.data.startswith("st:"))
