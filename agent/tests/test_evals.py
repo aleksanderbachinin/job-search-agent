@@ -12,6 +12,17 @@ from jobagent.scoring import Triage, Usage
 from test_service import CARD, assessment, detail
 
 FEEDS = [{"id": 1, "name": "PM remote"}]
+
+
+@pytest.fixture(autouse=True)
+def no_real_model(monkeypatch):
+    """CLI-тест, дошедший до настоящего клиента, сразу падает: иначе он прогнал бы рабочий снимок через модель."""
+
+    def refuse(*a, **kw):
+        raise AssertionError("тест дошёл до настоящей модели")
+
+    monkeypatch.setattr(cli, "ClaudeCodeClient", refuse)
+    monkeypatch.setattr(cli.anthropic, "AsyncAnthropic", refuse)
 USAGE = Usage(model="fake", input_tokens=10, output_tokens=2, cache_read_tokens=0)
 
 
@@ -364,3 +375,55 @@ async def test_cli_eval_warns_when_subscription_limit_stopped_the_run(tmp_path, 
     await asyncio.to_thread(cli.main, ["eval", "prefilter", "--db", str(db_path)])
     out = capsys.readouterr().out
     assert "Прогон неполный" in out and "hit your limit" in out
+
+
+async def test_filter_limit_spreads_over_buckets_good_first(tmp_path):
+    # По одной из каждой корзины по порядку: отклики, 4–5, 3, 1–2, без метки; потом второй круг.
+    scorer = FakeScorer()
+    result = await run(tmp_path, "prefilter", scorer, limit=6)
+    assert sorted(s for _, s in scorer.calls) == sorted(
+        ["1-applied-low", "2-top", "5-mid", "6-low", "8-stale", "3-four"]
+    )
+    assert result["limit"] == 6
+
+
+async def test_triage_limit(tmp_path):
+    scorer = FakeScorer()
+    await run(tmp_path, "triage", scorer, limit=3)
+    # Для triage корзина «без метки» — карточки без полного текста (9-triage).
+    assert sorted(s for _, s in scorer.calls) == ["1-applied-low", "2-top", "5-mid"]
+
+
+async def test_full_filter_run_saves_no_limit(tmp_path):
+    result = await run(tmp_path, "prefilter", FakeScorer())
+    assert result["limit"] is None
+
+
+def test_cli_refuses_zero_limit(capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["eval", "prefilter", "--limit", "0"])
+    assert exc.value.code != 0
+    assert "--limit" in capsys.readouterr().err
+
+
+async def test_cli_compare_with_limited_filter_run_reuses_its_vacancies(tmp_path, monkeypatch):
+    db_path = await make_db(tmp_path / "eval.sqlite3")
+    before = await evals.run_eval("prefilter", db_path, FakeScorer(), tmp_path / "evals", only={"3-four", "6-low"},
+                                  limit=2)
+    full = await evals.run_eval("prefilter", db_path, FakeScorer(), tmp_path / "evals")
+    monkeypatch.setattr(evals, "EVALS_DIR", tmp_path / "evals")
+    monkeypatch.setattr(cli, "ClaudeCodeClient", type("C", (), {"stopped": None, "__init__": lambda *a, **k: None}))
+    scorers = []
+
+    def make(*a, client=None, **kw):
+        scorers.append(FakeScorer())
+        return scorers[-1]
+
+    monkeypatch.setattr(cli, "Scorer", make)
+    base = ["eval", "prefilter", "--db", str(db_path), "--compare"]
+    await asyncio.to_thread(cli.main, [*base, str(before["path"])])
+    # Прошлый прогон был с --limit: повторяем ровно его вакансии.
+    assert sorted(s for _, s in scorers[-1].calls) == ["3-four", "6-low"]
+    await asyncio.to_thread(cli.main, [*base, str(full["path"])])
+    # С полным прогоном сравниваем полный: новые вакансии снимка тоже попадут.
+    assert len(scorers[-1].calls) == 8

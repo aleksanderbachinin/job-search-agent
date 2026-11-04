@@ -143,6 +143,7 @@ ssh root@193.42.112.144 '/opt/jobagent/app/agent/.venv/bin/python -c "import sql
 
 ```bash
 cd agent && uv run python -m jobagent.cli eval prefilter
+cd agent && uv run python -m jobagent.cli eval prefilter --limit 20
 cd agent && uv run python -m jobagent.cli eval triage
 cd agent && uv run python -m jobagent.cli eval scoring --limit 10
 cd agent && uv run python -m jobagent.cli eval prefilter --compare data/evals/<было>.json
@@ -151,6 +152,7 @@ cd agent && uv run python -m jobagent.cli eval prefilter --compare data/evals/<�
 
 - **prefilter** берёт вакансии с сохранённым полным текстом, которые проходят правила (украинские, например, отсекаются ещё до Haiku). Свежесть не проверяется: в снимке почти все вакансии уже старые. Около минуты и пары центов на весь снимок.
 - **triage** берёт карточки всех вакансий, кроме `baseline` и отсеянных правилами.
+- `--limit N` для prefilter и triage берёт выборку вместо всего снимка: по одной вакансии из каждой корзины по кругу (отклики, 4–5, 3, 1–2, без метки), так что вакансии, по которым считаются ложные отсевы, попадают первыми. Без `--limit` идёт весь снимок: около 320 вакансий для prefilter и 400 для triage. С `--compare` к прогону с `--limit` проверяются те же вакансии, что в нём.
 - **scoring** заново оценивает вакансии Sonnet. `--limit` обязателен, не больше 30: около 2 центов за вакансию. Вакансии берутся по одной на каждую старую оценку сверху вниз, отклики первыми. С `--compare` оцениваются те же вакансии, что в прошлом прогоне.
 - `--compare <было.json>` прогоняет шаг заново и сравнивает с прошлым прогоном. С двумя файлами команда только сравнивает их, модель не вызывается.
 - Запросы идут по 4 одновременно (`--concurrency`). Вакансия, на которой модель так и не ответила, в подсчёт не входит и печатается в «Ошибки модели».

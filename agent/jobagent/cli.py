@@ -204,7 +204,9 @@ async def cmd_eval(s: Settings, args: argparse.Namespace) -> None:
         # По подписке Claude Code: ключ API из .env в `claude -p` не передаётся.
         client = ClaudeCodeClient()
     scorer = Scorer(s.knowledge_dir, s.triage_model, s.scoring_model, s.scoring_effort, client=client)
-    only = {i["slug"] for i in compare[0]["items"]} if compare and args.step == "scoring" else None
+    # Scoring и выборки с --limit повторяем на тех же вакансиях, что в прошлом прогоне.
+    reuse = compare and (args.step == "scoring" or compare[0].get("limit"))
+    only = {i["slug"] for i in compare[0]["items"]} if reuse else None
     run = await evals.run_eval(
         args.step, args.db, scorer, evals.EVALS_DIR, args.limit, args.concurrency, s.min_score, only, args.backend
     )
@@ -233,7 +235,10 @@ def main(argv: list[str] | None = None) -> None:
     dr.add_argument("--file", type=Path, help="JSON полной вакансии вместо запроса к Hirify")
     ev = sub.add_parser("eval", help="проверить промпт шага на снимке базы")
     ev.add_argument("step", choices=evals.STEPS)
-    ev.add_argument("--limit", type=int, help=f"сколько вакансий (для scoring обязательно, до {evals.MAX_SCORING_LIMIT})")
+    ev.add_argument(
+        "--limit", type=int,
+        help=f"сколько вакансий: для отсева — выборка по корзинам, для scoring обязательно, до {evals.MAX_SCORING_LIMIT}",
+    )
     ev.add_argument(
         "--compare", type=Path, nargs="+", metavar="FILE",
         help="сравнить с прошлым прогоном; с двумя файлами — только сравнить, без прогона",
@@ -256,6 +261,8 @@ def main(argv: list[str] | None = None) -> None:
             ev.error("--compare принимает один или два файла")
         if args.concurrency < 1:
             ev.error("--concurrency должен быть не меньше 1")
+        if args.limit is not None and args.limit < 1:
+            ev.error("--limit должен быть не меньше 1")
         runs_model = not (args.compare and len(args.compare) == 2)
         if args.step == "scoring" and runs_model and not args.limit:
             ev.error(f"для scoring нужен --limit от 1 до {evals.MAX_SCORING_LIMIT}: около 2 центов за вакансию")

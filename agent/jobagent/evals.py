@@ -83,19 +83,30 @@ def select(step: str, vacancies: list[Vacancy], limit: int | None = None) -> lis
     triage — карточки, которые в работе дошли бы до Haiku: не baseline и прошли правила.
     prefilter — вакансии с сохранённым полным текстом, которые прошли правила по карточке и тексту.
     Свежесть не проверяем: в снимке почти всё уже старое, а проверяем мы промпт.
+    С limit отсев берёт по одной вакансии из каждой корзины по кругу (отклики, 4–5, 3, 1–2,
+    без метки): хорошие корзины, по которым считаются ложные отсевы, попадают первыми.
     scoring — вакансии с полным текстом и старой оценкой, по одной на оценку сверху вниз
     (отклики первыми), пока не наберётся limit.
     """
-    if step == "triage":
-        return [v for v in vacancies if v.status != "baseline" and rules.check_card(v.card) is None]
-    with_detail = [v for v in vacancies if v.detail]
-    if step == "prefilter":
-        return [v for v in with_detail if not rules_reject(v)]
-    groups: dict[int, list[Vacancy]] = {}
-    for v in with_detail:
-        if v.score is not None:
-            groups.setdefault(v.score, []).append(v)
-    queues = [sorted(g, key=lambda v: v.status != "applied") for _, g in sorted(groups.items(), reverse=True)]
+    if step in FILTER_STEPS:
+        if step == "triage":
+            pool = [v for v in vacancies if v.status != "baseline" and rules.check_card(v.card) is None]
+        else:
+            pool = [v for v in vacancies if v.detail and not rules_reject(v)]
+        if limit is None:
+            return pool
+        groups = {b: [v for v in pool if bucket_of(label_of(v)) == b] for b in BUCKETS}
+        return round_robin(list(groups.values()), limit)
+    groups_by_score: dict[int, list[Vacancy]] = {}
+    for v in vacancies:
+        if v.detail and v.score is not None:
+            groups_by_score.setdefault(v.score, []).append(v)
+    queues = [sorted(g, key=lambda v: v.status != "applied") for _, g in sorted(groups_by_score.items(), reverse=True)]
+    return round_robin(queues, limit)
+
+
+def round_robin(queues: list[list[Vacancy]], limit: int | None) -> list[Vacancy]:
+    queues = [list(q) for q in queues]
     picked: list[Vacancy] = []
     while any(queues) and (limit is None or len(picked) < limit):
         for q in queues:
@@ -262,6 +273,8 @@ async def run_eval(
         "model": scorer.scoring_model if step == "scoring" else scorer.triage_model,
         # api — Claude API по ключу, claude-code — `claude -p` по подписке. Сравнивать внутри одного.
         "backend": backend,
+        # С limit прогон взял выборку: --compare с ним повторяет ровно её.
+        "limit": limit,
         "db": str(db_path),
         "summary": summarize(step, items, min_score),
         "tokens": tokens,
