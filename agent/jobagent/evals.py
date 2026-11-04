@@ -240,6 +240,7 @@ async def run_eval(
     concurrency: int = CONCURRENCY,
     min_score: int = 4,
     only: set[str] | None = None,
+    backend: str = "api",
 ) -> dict[str, Any]:
     """Прогоняет шаг по снимку, сохраняет результат в out_dir и возвращает его (с ключом path).
 
@@ -259,6 +260,8 @@ async def run_eval(
             (prompt + json.dumps(transform_schema(OUTPUT_SCHEMAS[step]), ensure_ascii=False)).encode()
         ).hexdigest()[:12],
         "model": scorer.scoring_model if step == "scoring" else scorer.triage_model,
+        # api — Claude API по ключу, claude-code — `claude -p` по подписке. Сравнивать внутри одного.
+        "backend": backend,
         "db": str(db_path),
         "summary": summarize(step, items, min_score),
         "tokens": tokens,
@@ -287,7 +290,7 @@ def describe(item: dict[str, Any]) -> str:
 def render_header(run: dict[str, Any]) -> str:
     return (
         f"eval {run['step']}: {len(run['items'])} вакансий, модель {run['model']}, "
-        f"промпт {run['prompt_hash']}, коммит {run['git_sha']}"
+        f"бэкенд {run.get('backend', 'api')}, промпт {run['prompt_hash']}, коммит {run['git_sha']}"
     )
 
 
@@ -319,7 +322,7 @@ def render_report(run: dict[str, Any]) -> str:
             ]
     errors = [i for i in run["items"] if i["error"]]
     if errors:
-        lines += ["", f"Ошибки API: {len(errors)} (в подсчёт не вошли)"]
+        lines += ["", f"Ошибки модели: {len(errors)} (в подсчёт не вошли)"]
         lines += [f"  - {i['slug']}: {i['error']}" for i in errors]
     t = run["tokens"]
     lines += [
@@ -399,5 +402,5 @@ def render_compare(before: dict[str, Any], after: dict[str, Any]) -> str:
         lines.append(f"  средняя разница: {b['mean_diff']:+.2f} → {a['mean_diff']:+.2f}")
         lines.append(f"  совпало со старой оценкой: {b['same']} → {a['same']}")
         lines.append(f"  пересекли порог: {b['crossed_threshold']} → {a['crossed_threshold']}")
-    lines.append(f"  ошибки API: {b['errors']} → {a['errors']}")
+    lines.append(f"  ошибки модели: {b['errors']} → {a['errors']}")
     return "\n".join(lines)

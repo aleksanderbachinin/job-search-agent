@@ -4,7 +4,7 @@
   uv run python -m jobagent.cli setup-webhook https://<ваш-домен>/hirify/webhook
   uv run python -m jobagent.cli test-webhook <webhook_id>
   uv run python -m jobagent.cli dry-run <vacancy_id> [--file vacancy.json]
-  uv run python -m jobagent.cli eval prefilter|triage [--compare было.json]
+  uv run python -m jobagent.cli eval prefilter|triage [--compare было.json] [--backend api]
   uv run python -m jobagent.cli eval scoring --limit 10 [--compare было.json]
   uv run python -m jobagent.cli eval prefilter --compare было.json стало.json
   uv run python -m jobagent.cli package <vacancy_id> [--file vacancy.json] [--out папка]
@@ -25,6 +25,7 @@ import anthropic
 
 from . import evals, package_eval, rules
 from .cards import render_full
+from .claude_code import ClaudeCodeClient
 from .config import AGENT_DIR, Settings
 from .hirify import HirifyClient
 from .main import make_package_builder
@@ -196,14 +197,23 @@ async def cmd_eval(s: Settings, args: argparse.Namespace) -> None:
         return
     if not args.db.exists():
         raise SystemExit(f"Нет снимка базы {args.db}. Как его снять — agent/README.md, «Проверка промптов».")
-    # SDK сам повторяет запросы при 429, 5xx и обрывах связи; на прогон из сотни вакансий берём запас.
-    client = anthropic.AsyncAnthropic(max_retries=6)
+    if args.backend == "api":
+        # SDK сам повторяет запросы при 429, 5xx и обрывах связи; на прогон из сотни вакансий берём запас.
+        client = anthropic.AsyncAnthropic(max_retries=6)
+    else:
+        # По подписке Claude Code: ключ API из .env в `claude -p` не передаётся.
+        client = ClaudeCodeClient()
     scorer = Scorer(s.knowledge_dir, s.triage_model, s.scoring_model, s.scoring_effort, client=client)
     only = {i["slug"] for i in compare[0]["items"]} if compare and args.step == "scoring" else None
     run = await evals.run_eval(
-        args.step, args.db, scorer, evals.EVALS_DIR, args.limit, args.concurrency, s.min_score, only
+        args.step, args.db, scorer, evals.EVALS_DIR, args.limit, args.concurrency, s.min_score, only, args.backend
     )
     print(evals.render_report(run))
+    if getattr(client, "stopped", None):
+        print(
+            f"\n⚠ Прогон неполный: {client.stopped}\n"
+            "Оставшиеся вакансии не проверялись и стоят в «Ошибки модели». Как базу для --compare его не берите."
+        )
     if compare:
         print("\n" + evals.render_compare(compare[0], run))
 
@@ -230,6 +240,10 @@ def main(argv: list[str] | None = None) -> None:
     )
     ev.add_argument("--db", type=Path, default=evals.SNAPSHOT_PATH, help="снимок базы")
     ev.add_argument("--concurrency", type=int, default=evals.CONCURRENCY, help="запросов одновременно")
+    ev.add_argument(
+        "--backend", choices=("claude-code", "api"), default="claude-code",
+        help="claude-code — через `claude -p` по подписке (по умолчанию), api — Claude API за счёт ключа из .env",
+    )
     pk = sub.add_parser("package", help="собрать пакет отклика одной вакансии без базы и бота")
     pk.add_argument("vacancy_id", type=int)
     pk.add_argument("--file", type=Path, help="JSON полной вакансии вместо запроса к Hirify")

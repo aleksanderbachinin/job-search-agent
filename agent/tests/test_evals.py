@@ -317,3 +317,50 @@ async def test_snapshot_is_opened_read_only(tmp_path):
     # Database.connect перевёл бы снимок в WAL и прогнал схему: файл бы изменился.
     assert db_path.read_bytes() == before
     assert sorted(p.name for p in tmp_path.iterdir()) == ["eval.sqlite3"]
+
+
+@pytest.mark.parametrize(
+    "extra,backend,client_kind",
+    [([], "claude-code", "claude-code"), (["--backend", "api"], "api", "api")],
+)
+async def test_cli_eval_backend_defaults_to_claude_code(tmp_path, monkeypatch, capsys, extra, backend, client_kind):
+    # Локальные прогоны по умолчанию идут через `claude -p` по подписке; API — только явно.
+    db_path = await make_db(tmp_path / "eval.sqlite3")
+    monkeypatch.setattr(evals, "EVALS_DIR", tmp_path / "evals")
+    made = {}
+
+    class FakeClaudeCode:
+        stopped = None
+
+        def __init__(self, *a, **kw):
+            made["client"] = "claude-code"
+
+    class FakeAnthropic:
+        def __init__(self, *a, **kw):
+            made["client"] = "api"
+
+    monkeypatch.setattr(cli, "ClaudeCodeClient", FakeClaudeCode)
+    monkeypatch.setattr(cli.anthropic, "AsyncAnthropic", FakeAnthropic)
+    monkeypatch.setattr(cli, "Scorer", lambda *a, client=None, **kw: FakeScorer())
+    await asyncio.to_thread(cli.main, ["eval", "prefilter", "--db", str(db_path), *extra])
+    assert made["client"] == client_kind
+    [saved] = list((tmp_path / "evals").glob("*.json"))
+    assert json.loads(saved.read_text(encoding="utf-8"))["backend"] == backend
+    assert f"бэкенд {backend}" in capsys.readouterr().out
+
+
+async def test_cli_eval_warns_when_subscription_limit_stopped_the_run(tmp_path, monkeypatch, capsys):
+    db_path = await make_db(tmp_path / "eval.sqlite3")
+    monkeypatch.setattr(evals, "EVALS_DIR", tmp_path / "evals")
+
+    class StoppedClaudeCode:
+        stopped = "You've hit your limit"
+
+        def __init__(self, *a, **kw):
+            pass
+
+    monkeypatch.setattr(cli, "ClaudeCodeClient", StoppedClaudeCode)
+    monkeypatch.setattr(cli, "Scorer", lambda *a, client=None, **kw: FakeScorer())
+    await asyncio.to_thread(cli.main, ["eval", "prefilter", "--db", str(db_path)])
+    out = capsys.readouterr().out
+    assert "Прогон неполный" in out and "hit your limit" in out
