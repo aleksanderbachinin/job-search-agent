@@ -10,6 +10,7 @@ import logging
 import time
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
@@ -18,6 +19,8 @@ from .db import Database
 from .hirify import HirifyClient, HirifyError
 
 log = logging.getLogger(__name__)
+
+WEBHOOK_PATH = "/hirify/webhook"
 
 
 def verify_signature(
@@ -39,7 +42,7 @@ def webhook_router(
 ) -> APIRouter:
     router = APIRouter()
 
-    @router.post("/hirify/webhook")
+    @router.post(WEBHOOK_PATH)
     async def hirify_webhook(request: Request) -> dict[str, Any]:
         body = await request.body()
         h = request.headers
@@ -119,6 +122,34 @@ async def baseline_if_empty(db: Database, hirify: HirifyClient, feed_ids: list[i
     log.info("Первый запуск: %d вакансий помечены как уже виденные", n)
 
 
+async def ensure_webhook_active(db: Database, hirify: HirifyClient) -> list[int]:
+    """Включает обратно наш вебхук, если Hirify его отключил. Возвращает id включённых.
+
+    После серии неудачных доставок (сервис лежал, адрес отдавал 502) Hirify молча
+    переводит вебхук в disabled, привязка к фильтрам остаётся. Так было 4 ноября 2026:
+    после двух суток простоя вакансии пять дней шли только через опрос фильтров.
+    Наш вебхук узнаём по пути адреса. Чужие вебхуки аккаунта не трогаем.
+    """
+    reactivated = []
+    for hook in await hirify.list_webhooks():
+        if urlparse(hook.get("url") or "").path != WEBHOOK_PATH:
+            continue
+        if hook.get("is_active") and hook.get("state", "active") == "active":
+            continue
+        await hirify.update_webhook(hook["id"], is_active=True)
+        await db.log_event("webhook_reactivated", webhook_id=hook["id"], state=hook.get("state"))
+        log.warning("Вебхук Hirify %s был отключён (state=%s), включил обратно", hook["id"], hook.get("state"))
+        reactivated.append(hook["id"])
+    return reactivated
+
+
+async def check_webhook(db: Database, hirify: HirifyClient) -> None:
+    try:
+        await ensure_webhook_active(db, hirify)
+    except (HirifyError, httpx.TransportError) as e:
+        log.warning("Проверка вебхука Hirify не удалась: %s", e)
+
+
 async def reconcile_forever(
     db: Database,
     hirify: HirifyClient,
@@ -142,8 +173,11 @@ async def reconcile_forever(
             await asyncio.sleep(delay)
             delay = min(delay * 2, 1800)
 
+    # При старте: после простоя вебхук мог быть отключён, ждать первого опроса полсуток незачем.
+    await check_webhook(db, hirify)
     while True:
         await asyncio.sleep(every_hours * 3600)
+        await check_webhook(db, hirify)
         try:
             n = await sync_feeds(db, hirify, feed_ids, pages, per_page, status="queued", source="reconcile")
             await db.log_event("reconcile", added=n)

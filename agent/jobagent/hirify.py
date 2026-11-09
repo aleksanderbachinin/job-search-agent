@@ -170,6 +170,10 @@ class HirifyClient:
         data, _ = await self._request("GET", "/webhooks")
         return data or []
 
+    async def update_webhook(self, webhook_id: int, **fields: Any) -> dict[str, Any]:
+        data, _ = await self._request("PATCH", f"/webhooks/{webhook_id}", json=fields, retry=True)
+        return data or {}
+
     async def set_feed_webhook(self, feed_id: int, webhook_id: int | None) -> dict[str, Any]:
         data, _ = await self._request(
             "PUT", f"/feeds/{feed_id}/delivery", json={"webhook_endpoint_id": webhook_id}, retry=True

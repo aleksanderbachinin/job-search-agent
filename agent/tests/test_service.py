@@ -429,6 +429,70 @@ async def test_baseline_runs_once_and_marks_cards(db):
     assert (await db.get(CARD["slug"])).status == "baseline"
 
 
+class Webhooks:
+    """Hirify с вебхуками аккаунта: наш отключён после простоя, чужой тоже выключен."""
+
+    def __init__(self, hooks):
+        self.hooks = hooks
+        self.patched = []
+
+    async def list_webhooks(self):
+        return self.hooks
+
+    async def update_webhook(self, webhook_id, **fields):
+        self.patched.append((webhook_id, fields))
+        return {"id": webhook_id, "state": "active", "is_active": True}
+
+
+async def test_disabled_webhook_is_reactivated(db):
+    from jobagent.ingest import ensure_webhook_active
+
+    h = Webhooks([
+        {"id": 26, "url": "https://193-42-112-144.sslip.io/hirify/webhook", "state": "disabled", "is_active": False},
+        {"id": 7, "url": "https://example.com/other", "state": "disabled", "is_active": False},
+    ])
+    assert await ensure_webhook_active(db, h) == [26]
+    assert h.patched == [(26, {"is_active": True})]
+    assert await db.has_event("webhook_reactivated")
+
+
+async def test_active_webhook_left_alone(db):
+    from jobagent.ingest import ensure_webhook_active
+
+    h = Webhooks([{"id": 26, "url": "https://x.sslip.io/hirify/webhook", "state": "active", "is_active": True}])
+    assert await ensure_webhook_active(db, h) == []
+    assert h.patched == [] and not await db.has_event("webhook_reactivated")
+
+
+async def test_webhook_check_failure_does_not_raise(db):
+    from jobagent import hirify as hmod
+    from jobagent.ingest import check_webhook
+
+    class Down:
+        async def list_webhooks(self):
+            raise hmod.HirifyError(503, "unavailable", "down")
+
+    await check_webhook(db, Down())  # сбой Hirify не роняет опрос фильтров
+
+
+async def test_hirify_update_webhook_sends_patch():
+    import httpx
+
+    from jobagent import hirify as hmod
+
+    calls = []
+
+    def handler(request):
+        calls.append((request.method, request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"ok": True, "data": {"id": 26, "is_active": True}, "meta": {}})
+
+    client = hmod.HirifyClient("k")
+    client._http = httpx.AsyncClient(base_url=hmod.BASE_URL, transport=httpx.MockTransport(handler))
+    assert (await client.update_webhook(26, is_active=True))["is_active"] is True
+    assert calls == [("PATCH", "/api/agent/webhooks/26", {"is_active": True})]
+    await client.aclose()
+
+
 # --- карточка и статистика ---
 
 
