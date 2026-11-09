@@ -57,7 +57,7 @@ def test_fact_belongs_to_employer():
     fb = parse_facts(EXPERIENCE)
     assert fb.facts["MPS-1"].employer == "MPS" and "1 000+" in fb.facts["MPS-1"].text
     assert 1000 in fb.facts["MPS-1"].numbers and "metabase" not in fb.facts["MPS-1"].terms
-    assert fb.employers["VIBE"].titles == ("Product Manager (UX & AI Development)",)
+    assert fb.employers["VIBE"].titles == ("Product Builder", "Product Manager (UX & AI Development)")
     assert fb.employers["RLY"].titles == ("Head of Content Production", "Growth Product Manager")
 
 
