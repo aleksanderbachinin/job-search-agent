@@ -136,7 +136,10 @@ async def ensure_webhook_active(db: Database, hirify: HirifyClient) -> list[int]
             continue
         if hook.get("is_active") and hook.get("state", "active") == "active":
             continue
-        await hirify.update_webhook(hook["id"], is_active=True)
+        updated = await hirify.update_webhook(hook["id"], is_active=True)
+        if updated.get("state", "active") != "active":
+            log.error("Вебхук Hirify %s не включился: state=%s", hook["id"], updated.get("state"))
+            continue
         await db.log_event("webhook_reactivated", webhook_id=hook["id"], state=hook.get("state"))
         log.warning("Вебхук Hirify %s был отключён (state=%s), включил обратно", hook["id"], hook.get("state"))
         reactivated.append(hook["id"])
@@ -144,10 +147,13 @@ async def ensure_webhook_active(db: Database, hirify: HirifyClient) -> list[int]
 
 
 async def check_webhook(db: Database, hirify: HirifyClient) -> None:
+    """Проверка — подстраховка: любой её сбой не должен останавливать опрос фильтров."""
     try:
         await ensure_webhook_active(db, hirify)
     except (HirifyError, httpx.TransportError) as e:
         log.warning("Проверка вебхука Hirify не удалась: %s", e)
+    except Exception:
+        log.exception("Проверка вебхука Hirify упала")
 
 
 async def reconcile_forever(

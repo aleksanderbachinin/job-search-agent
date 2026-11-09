@@ -474,6 +474,25 @@ async def test_webhook_check_failure_does_not_raise(db):
 
     await check_webhook(db, Down())  # сбой Hirify не роняет опрос фильтров
 
+    class Odd:  # неожиданный ответ: вебхук без id
+        async def list_webhooks(self):
+            return [{"url": "https://x/hirify/webhook", "state": "disabled", "is_active": False}]
+
+    await check_webhook(db, Odd())
+
+
+async def test_webhook_still_disabled_after_patch_not_logged_as_reactivated(db):
+    from jobagent.ingest import ensure_webhook_active
+
+    class Stuck(Webhooks):
+        async def update_webhook(self, webhook_id, **fields):
+            self.patched.append((webhook_id, fields))
+            return {"id": webhook_id, "state": "disabled", "is_active": True}
+
+    h = Stuck([{"id": 26, "url": "https://x/hirify/webhook", "state": "disabled", "is_active": True}])
+    assert await ensure_webhook_active(db, h) == []
+    assert h.patched and not await db.has_event("webhook_reactivated")
+
 
 async def test_hirify_update_webhook_sends_patch():
     import httpx
