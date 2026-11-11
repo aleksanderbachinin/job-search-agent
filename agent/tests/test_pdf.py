@@ -54,7 +54,7 @@ B = {
     ],
     "MPS": [
         c("Interviewed sellers, found an unmet need and launched a new analytics tool that reached 1,000+ MAU.", "MPS-1"),
-        c("Sign-up experiments removed friction points and raised registration conversion by 25% (GA4, SQL).", "MPS-2", "MPS-6"),
+        c("Sign-up experiments removed friction points and raised registration conversion by 13% (GA4, SQL).", "MPS-2", "MPS-6"),
         c("Grew paid users of the SEO module by 25% in 5 months, working with data science on funnel metrics and data quality.", "MPS-3", "MPS-5"),
         c("Introduced AI tools for processing user requests and wrote the prompts the team kept using: processing time halved.", "MPS-4"),
     ],

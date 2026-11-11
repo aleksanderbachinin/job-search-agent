@@ -220,7 +220,7 @@ def test_stop_phrases_both_languages():
 # ---------- проверка утверждений по фактам ----------
 # Номера фактов сверены с experience/Bachinin_Alexander_Experience.md: MPS-1 (1 000+ MAU),
 # AEZ-1 ($18K MRR, 6,6%), AEZ-2 (1,5% → 2,5%), GPTS-6 (продление 43% → 57%, 70% → 76%),
-# GPTS-2 (активация 81%), MPS-0 (описание MPSTATS), MPS-2 (регистрация +25%), VIBE-1 (UX платформы).
+# GPTS-2 (активация 81%), MPS-0 (описание MPSTATS), MPS-2 (регистрация +13%), VIBE-1 (UX платформы).
 
 
 @pytest.fixture(scope="module")
