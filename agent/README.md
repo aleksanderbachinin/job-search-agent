@@ -93,7 +93,7 @@ cd agent && uv run python -m jobagent.cli test-webhook <webhook_id>
 | Что | Где |
 |---|---|
 | Сервер | VPS в Таллине, `root@193.42.112.144`, Ubuntu 24.04. На нём же VPN Александра (Shadowsocks, Xray, WireGuard, dante): их, файрвол, `/etc/ssl/cloudflare/` и `/usr/local/etc/xray/config.json.bak` не трогать без его согласия |
-| Адрес для Hirify | `https://193-42-112-144.sslip.io/hirify/webhook`, вебхук Hirify id=26, подключён ко всем 6 фильтрам |
+| Адрес для Hirify | `https://193-42-112-144.sslip.io/hirify/webhook`, вебхук Hirify id=26, подключён ко всем активным фильтрам (5 на 2026-11-12) |
 | Код | `/opt/jobagent/app` (копия папки «Agent Job Search»), пользователь `jobagent` |
 | База | `/opt/jobagent/data/jobagent.sqlite3` |
 | Пакеты отклика | `/opt/jobagent/data/packages/`. systemd (`ProtectSystem=strict`) даёт сервису писать только в `/opt/jobagent/data`, папка кода для него только для чтения |
