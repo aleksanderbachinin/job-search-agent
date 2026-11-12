@@ -63,7 +63,7 @@ B = {
         c("Set up Scrum: in-sprint task completion grew from 25% to 40%; customer-reported bugs fell by 15%.", "SKK-2", "SKK-4"),
     ],
     "STR": [
-        c("Ran 45 customer interviews (JTBD), launched the MVP in 1 month and signed 17 paying clients from scratch in 3 months.", "STR-1", "STR-2"),
+        c("Ran 45 customer interviews (JTBD), launched the MVP in 1 month and signed 27 paying subscription clients from scratch in the first month after launch.", "STR-1", "STR-2"),
         c("Managed the launch marketing budget and Meta and TikTok campaigns; led a team of 3.", "STR-3", "STR-4"),
     ],
     "AEZ": [
