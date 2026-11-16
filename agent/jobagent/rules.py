@@ -19,6 +19,15 @@ UKRAINIAN_SHARE = 0.02
 # сравниваем низ («от 150 000»). Другие валюты не трогаем: там месячные и годовые вилки вперемешку.
 MIN_SALARY_RUB = 250_000
 
+# Стоп-фактор «офис или гибрид без релокации» по карточке (с 2026-11-16): формат указан, а удалёнки
+# в нём нет. До правила такие вакансии отсеивали Haiku и Sonnet: из 294 вне ленты релокации
+# откликов не было ни одного. Вакансии из лент с релокацией не трогаем: там офис с переездом подходит.
+FORMAT_NAMES = {"hybrid": "гибрид", "onsite": "офис"}
+RELOCATION_FEED = re.compile(r"relocation|релокац", re.IGNORECASE)
+
+# Удалёнка, на которую берут только из США: из 157 таких в бот не попала ни одна (с 2026-11-16).
+USA_ONLY = "usa"
+
 # Роли, которые точно не про Александра, даже если в названии есть «product».
 HARD_REJECT = re.compile(
     r"product\s+design|продуктов\w*\s+дизайн|product\s+analyst|продуктов\w*\s+аналитик"
@@ -61,8 +70,24 @@ def low_salary(vacancy: dict[str, Any]) -> int | None:
     return int(top) if 0 < top < MIN_SALARY_RUB else None
 
 
-def check_card(card: dict[str, Any]) -> str | None:
-    """Причина отказа по карточке или None, если карточку стоит смотреть дальше."""
+def relocation_feed(feeds: list[dict[str, Any]]) -> bool:
+    """Пришла ли вакансия из ленты с релокацией (по названию ленты)."""
+    return any(RELOCATION_FEED.search(str(f.get("name") or "")) for f in feeds)
+
+
+def no_remote(card: dict[str, Any]) -> str | None:
+    """Форматы через запятую, если формат указан и удалёнки в нём нет, иначе None."""
+    formats = [str(f).lower() for f in card.get("work_format") or []]
+    if not formats or "remote" in formats:
+        return None
+    return ", ".join(FORMAT_NAMES.get(f, f) for f in formats)
+
+
+def check_card(card: dict[str, Any], relocation: bool = False) -> str | None:
+    """Причина отказа по карточке или None, если карточку стоит смотреть дальше.
+
+    relocation: вакансия пришла из ленты с релокацией, офис и гибрид там не отсеиваются.
+    """
     if card.get("has_applied"):
         return "уже откликался через Hirify"
     if card.get("in_tracker"):
@@ -74,6 +99,10 @@ def check_card(card: dict[str, Any]) -> str | None:
         return "вакансия на украинском"
     if top := low_salary(card):
         return f"зарплата до {top:,} ₽, ниже {MIN_SALARY_RUB:,} ₽".replace(",", " ")
+    if card.get("remote_type") == USA_ONLY:
+        return "удалёнка только из США"
+    if not relocation and (formats := no_remote(card)):
+        return f"формат без удалёнки: {formats}"
     title = card.get("title") or ""
     if HARD_REJECT.search(title):
         return f"роль не по профилю: {title}"

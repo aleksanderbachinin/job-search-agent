@@ -19,6 +19,12 @@ log = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 3
 IDLE_WAIT_SEC = 60
+# Кончился баланс Anthropic: вакансия остаётся в очереди, попытка не тратится, проверяем раз в час.
+CREDIT_WAIT_SEC = 3600
+
+
+def out_of_credits(e: anthropic.BadRequestError) -> bool:
+    return "credit balance" in str(e).lower()
 
 
 class CardSink(Protocol):
@@ -53,6 +59,7 @@ class Pipeline:
         self.research = research
         self.prefilter = prefilter
         self.wake = asyncio.Event()
+        self.no_credits = False
 
     async def run_forever(self) -> None:
         while True:
@@ -72,7 +79,22 @@ class Pipeline:
         """Обрабатывает вакансию. Возвращает паузу в секундах перед следующей (при лимитах)."""
         try:
             await self.process(v)
+            if self.no_credits:
+                self.no_credits = False
+                await self.sink.alert("Баланс Anthropic снова есть, продолжаю разбирать очередь.")
             return 0
+        except anthropic.BadRequestError as e:
+            if not out_of_credits(e):
+                log.exception("Ошибка обработки %s", v.slug)
+                return await self._fail(v, e)
+            log.warning("Кончился баланс Anthropic, %s остаётся в очереди", v.slug)
+            if not self.no_credits:
+                self.no_credits = True
+                await self.sink.alert(
+                    "Кончился баланс Anthropic. Вакансии ждут в очереди, проверяю раз в час. "
+                    "После пополнения продолжу сам."
+                )
+            return CREDIT_WAIT_SEC
         except HirifyError as e:
             if e.is_limit:
                 wait = float(e.retry_after or 600)
@@ -115,7 +137,7 @@ class Pipeline:
         return bool(company) and company_key(company) in await self.db.skipped_companies()
 
     async def process(self, v: Vacancy) -> None:
-        if reason := rules.check_card(v.card):
+        if reason := rules.check_card(v.card, relocation=rules.relocation_feed(v.feeds)):
             stage = "already" if "откликался" in reason or "трекере" in reason else "rules"
             return await self.reject(v, stage, reason)
 

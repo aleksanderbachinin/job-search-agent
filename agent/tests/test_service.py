@@ -211,6 +211,44 @@ def test_low_rub_salary_rejected(salary, rejected):
         assert reason.startswith("зарплата до ")
 
 
+@pytest.mark.parametrize(
+    "work_format,rejected",
+    [
+        (["remote"], False),
+        (["hybrid", "remote"], False),
+        (["onsite", "remote", "hybrid"], False),
+        ([], False),
+        (None, False),
+        (["hybrid"], True),
+        (["onsite"], True),
+        (["hybrid", "onsite"], True),
+        (["Hybrid"], True),
+    ],
+)
+def test_format_without_remote_rejected(work_format, rejected):
+    reason = rules.check_card({**CARD, "work_format": work_format})
+    assert (reason is not None) == rejected
+    if rejected:
+        assert reason.startswith("формат без удалёнки")
+
+
+def test_format_without_remote_kept_for_relocation_feed():
+    card = {**CARD, "work_format": ["onsite"]}
+    assert rules.check_card(card, relocation=True) is None
+    reloc = [{"id": 67562, "name": "Product Manager — relocation (TG)"}]
+    plain = [{"id": 31447, "name": "Product Manager — remote/hybrid (TG)"}]
+    assert rules.relocation_feed(reloc + plain)
+    assert not rules.relocation_feed(plain)
+    assert not rules.relocation_feed([])
+
+
+def test_usa_only_remote_rejected():
+    assert rules.check_card({**CARD, "remote_type": "usa"}) == "удалёнка только из США"
+    assert rules.check_card({**CARD, "remote_type": "usa"}, relocation=True) == "удалёнка только из США"
+    assert rules.check_card({**CARD, "remote_type": "europe"}) is None
+    assert rules.check_card({**CARD, "remote_type": None}) is None
+
+
 def test_stale_detail():
     old = (datetime.now(UTC) - timedelta(days=30)).isoformat().replace("+00:00", "Z")
     assert rules.check_detail(detail(created_at=old), 7)[0] == "stale"
@@ -367,6 +405,45 @@ async def test_pipeline_error_retries_then_alerts(db):
         await p.process_safely(await db.get(CARD["slug"]))
     v = await db.get(CARD["slug"])
     assert v.status == "error" and v.attempts == 3 and len(sink.alerts) == 1
+
+
+def credit_error():
+    import anthropic
+    import httpx
+
+    msg = "Your credit balance is too low to access the Anthropic API."
+    request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    body = {"type": "error", "error": {"type": "invalid_request_error", "message": msg}}
+    return anthropic.BadRequestError(msg, response=httpx.Response(400, request=request), body=body)
+
+
+async def test_pipeline_out_of_credits_pauses_with_one_alert(db):
+    from jobagent.pipeline import CREDIT_WAIT_SEC
+
+    class NoCredits(FakeScorer):
+        broke = True
+
+        async def triage(self, card):
+            if self.broke:
+                raise credit_error()
+            return await super().triage(card)
+
+    other = {**CARD, "vacancy_id": 1071420, "slug": "1071420-product-manager-saas"}
+    await db.upsert_card(CARD, [], source="webhook")
+    await db.upsert_card(other, [], source="webhook")
+    scorer, sink = NoCredits(score=5), FakeSink()
+    p = Pipeline(db, FakeHirify(detail()), scorer, sink, 4, 7)
+    for slug in (CARD["slug"], other["slug"], CARD["slug"]):
+        assert await p.process_safely(await db.get(slug)) == CREDIT_WAIT_SEC
+    for slug in (CARD["slug"], other["slug"]):
+        v = await db.get(slug)
+        assert v.status == "queued" and v.attempts == 0
+    assert len(sink.alerts) == 1 and "баланс" in sink.alerts[0].lower()
+
+    scorer.broke = False
+    assert await p.process_safely(await db.get(CARD["slug"])) == 0
+    assert (await db.get(CARD["slug"])).status == "shown"
+    assert len(sink.alerts) == 2 and "снова" in sink.alerts[1]
 
 
 async def test_pipeline_hirify_outage_keeps_vacancy_queued(db):

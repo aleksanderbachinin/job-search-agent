@@ -90,7 +90,7 @@ def select(step: str, vacancies: list[Vacancy], limit: int | None = None) -> lis
     """
     if step in FILTER_STEPS:
         if step == "triage":
-            pool = [v for v in vacancies if v.status != "baseline" and rules.check_card(v.card) is None]
+            pool = [v for v in vacancies if v.status != "baseline" and not card_reject(v)]
         else:
             pool = [v for v in vacancies if v.detail and not rules_reject(v)]
         if limit is None:
@@ -115,8 +115,12 @@ def round_robin(queues: list[list[Vacancy]], limit: int | None) -> list[Vacancy]
     return picked
 
 
+def card_reject(v: Vacancy) -> bool:
+    return rules.check_card(v.card, relocation=rules.relocation_feed(v.feeds)) is not None
+
+
 def rules_reject(v: Vacancy) -> bool:
-    if rules.check_card(v.card):
+    if card_reject(v):
         return True
     rejection = rules.check_detail(v.detail or {}, max_age_days=NO_AGE_LIMIT)
     return rejection is not None and rejection[0] != "stale"
