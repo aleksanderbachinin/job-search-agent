@@ -223,6 +223,8 @@ def test_low_rub_salary_rejected(salary, rejected):
         (["onsite"], True),
         (["hybrid", "onsite"], True),
         (["Hybrid"], True),
+        ("remote", False),
+        ("hybrid", True),
     ],
 )
 def test_format_without_remote_rejected(work_format, rejected):
@@ -244,7 +246,7 @@ def test_format_without_remote_kept_for_relocation_feed():
 
 def test_usa_only_remote_rejected():
     assert rules.check_card({**CARD, "remote_type": "usa"}) == "удалёнка только из США"
-    assert rules.check_card({**CARD, "remote_type": "usa"}, relocation=True) == "удалёнка только из США"
+    assert rules.check_card({**CARD, "remote_type": "usa"}, relocation=True) is None
     assert rules.check_card({**CARD, "remote_type": "europe"}) is None
     assert rules.check_card({**CARD, "remote_type": None}) is None
 
@@ -444,6 +446,31 @@ async def test_pipeline_out_of_credits_pauses_with_one_alert(db):
     assert await p.process_safely(await db.get(CARD["slug"])) == 0
     assert (await db.get(CARD["slug"])).status == "shown"
     assert len(sink.alerts) == 2 and "снова" in sink.alerts[1]
+
+
+async def test_pipeline_other_bad_request_spends_attempt(db):
+    import anthropic
+    import httpx
+
+    class BadPrompt(FakeScorer):
+        async def triage(self, card):
+            request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+            raise anthropic.BadRequestError("prompt is too long", response=httpx.Response(400, request=request), body=None)
+
+    await db.upsert_card(CARD, [], source="webhook")
+    sink = FakeSink()
+    p = Pipeline(db, FakeHirify(detail()), BadPrompt(), sink, 4, 7)
+    assert await p.process_safely(await db.next_queued()) == 5
+    v = await db.get(CARD["slug"])
+    assert v.attempts == 1 and v.status == "queued" and not sink.alerts
+
+
+async def test_pipeline_keeps_onsite_from_relocation_feed(db):
+    card = {**CARD, "work_format": ["onsite"]}
+    await db.upsert_card(card, [{"id": 67562, "name": "Product Manager — relocation (TG)"}], source="webhook")
+    p = Pipeline(db, FakeHirify(detail(work_format=["onsite"])), FakeScorer(score=5), FakeSink(), 4, 7)
+    await p.process_safely(await db.next_queued())
+    assert (await db.get(CARD["slug"])).status == "shown"
 
 
 async def test_pipeline_hirify_outage_keeps_vacancy_queued(db):

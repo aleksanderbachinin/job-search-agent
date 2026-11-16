@@ -77,7 +77,8 @@ def relocation_feed(feeds: list[dict[str, Any]]) -> bool:
 
 def no_remote(card: dict[str, Any]) -> str | None:
     """Форматы через запятую, если формат указан и удалёнки в нём нет, иначе None."""
-    formats = [str(f).lower() for f in card.get("work_format") or []]
+    raw = card.get("work_format") or []
+    formats = [str(f).lower() for f in ([raw] if isinstance(raw, str) else raw)]
     if not formats or "remote" in formats:
         return None
     return ", ".join(FORMAT_NAMES.get(f, f) for f in formats)
@@ -99,7 +100,8 @@ def check_card(card: dict[str, Any], relocation: bool = False) -> str | None:
         return "вакансия на украинском"
     if top := low_salary(card):
         return f"зарплата до {top:,} ₽, ниже {MIN_SALARY_RUB:,} ₽".replace(",", " ")
-    if card.get("remote_type") == USA_ONLY:
+    # В ленте релокации США исключены фильтром Hirify, а регион «usa» там бывает и у офиса с переездом.
+    if not relocation and card.get("remote_type") == USA_ONLY:
         return "удалёнка только из США"
     if not relocation and (formats := no_remote(card)):
         return f"формат без удалёнки: {formats}"
