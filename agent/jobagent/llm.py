@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import re
+import time
 
 import anthropic
 
@@ -51,3 +52,20 @@ def out_of_credits(e: anthropic.APIStatusError) -> bool:
         return True
     text = str(e).lower()
     return "credit balance" in text or "insufficient credits" in text
+
+
+RATE_LIMIT_MIN_WAIT = 60
+RATE_LIMIT_MAX_WAIT = 12 * 3600
+
+
+def rate_limit_wait(e: anthropic.RateLimitError) -> float:
+    """Сколько ждать после 429. OpenRouter пишет время сброса в X-RateLimit-Reset (мс от эпохи).
+
+    Минутный лимит бесплатных моделей сбрасывается быстро, дневной — до полуночи UTC.
+    """
+    raw = e.response.headers.get("X-RateLimit-Reset") if e.response is not None else None
+    try:
+        wait = int(raw) / 1000 - time.time() if raw else RATE_LIMIT_MIN_WAIT
+    except ValueError:
+        wait = RATE_LIMIT_MIN_WAIT
+    return max(RATE_LIMIT_MIN_WAIT, min(wait, RATE_LIMIT_MAX_WAIT))

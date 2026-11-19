@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import asyncio
 import json
 import re
@@ -28,7 +29,7 @@ from .cards import render_full
 from .claude_code import ClaudeCodeClient
 from .config import AGENT_DIR, Settings
 from .hirify import HirifyClient
-from .llm import make_client
+from .llm import canonical_model, make_client
 from .main import make_package_builder
 from .package_bot import render_summary
 from .package_store import write_files
@@ -211,6 +212,10 @@ async def cmd_eval(s: Settings, args: argparse.Namespace) -> None:
     else:
         # По подписке Claude Code: ключ API из .env в `claude -p` не передаётся.
         client = ClaudeCodeClient()
+        # `claude -p` знает только названия Anthropic, а с ключом OpenRouter в .env они переведены.
+        s = dataclasses.replace(
+            s, triage_model=canonical_model(s.triage_model), scoring_model=canonical_model(s.scoring_model)
+        )
     scorer = Scorer(
         s.knowledge_dir,
         s.triage_model,

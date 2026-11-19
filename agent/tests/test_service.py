@@ -468,6 +468,88 @@ async def test_pipeline_openrouter_402_pauses_without_spending_attempt(db):
     assert len(sink.alerts) == 1 and "баланс" in sink.alerts[0].lower()
 
 
+def rate_limit_error(msg="Rate limit exceeded: free-models-per-minute", headers=None):
+    import anthropic
+    import httpx
+
+    request = httpx.Request("POST", "https://openrouter.ai/api/v1/messages")
+    return anthropic.RateLimitError(msg, response=httpx.Response(429, request=request, headers=headers or {}), body=None)
+
+
+class CountingScorer(FakeScorer):
+    """Оценка падает с 429 заданное число раз; считает вызовы отсева."""
+
+    def __init__(self, fail_times, error=None, **kw):
+        super().__init__(**kw)
+        self.fail_times = fail_times
+        self.error = error or rate_limit_error()
+        self.triaged = 0
+        self.prefiltered = 0
+
+    async def triage(self, card):
+        self.triaged += 1
+        return await super().triage(card)
+
+    async def prefilter(self, d, feeds):
+        self.prefiltered += 1
+        return await super().prefilter(d, feeds)
+
+    async def assess(self, d, feeds):
+        if self.fail_times:
+            self.fail_times -= 1
+            raise self.error
+        return await super().assess(d, feeds)
+
+
+async def test_pipeline_retry_after_scoring_429_skips_paid_steps(db):
+    # 429 бесплатной модели на оценке: повтор не должен заново тратить Haiku, Hirify и LinkedIn.
+    await db.upsert_card(CARD, [], source="webhook")
+    scorer, hirify, sink = CountingScorer(fail_times=1, score=5), FakeHirify(detail()), FakeSink()
+    p = Pipeline(db, hirify, scorer, sink, 4, 7)
+    assert await p.process_safely(await db.next_queued()) == 60
+    v = await db.get(CARD["slug"])
+    assert v.status == "queued" and v.attempts == 0
+    assert await p.process_safely(await db.next_queued()) == 0
+    assert (await db.get(CARD["slug"])).status == "shown"
+    assert scorer.triaged == 1 and scorer.prefiltered == 1 and hirify.reads == 1 and scorer.assessed == 1
+
+
+async def test_pipeline_daily_rate_limit_waits_for_reset_with_one_alert(db):
+    import time
+
+    reset_ms = int((time.time() + 5 * 3600) * 1000)
+    err = rate_limit_error("Rate limit exceeded: free-models-per-day", {"X-RateLimit-Reset": str(reset_ms)})
+    await db.upsert_card(CARD, [], source="webhook")
+    scorer, sink = CountingScorer(fail_times=2, error=err, score=5), FakeSink()
+    p = Pipeline(db, FakeHirify(detail()), scorer, sink, 4, 7)
+    first = await p.process_safely(await db.next_queued())
+    assert 4.9 * 3600 < first <= 5 * 3600 + 1
+    await p.process_safely(await db.next_queued())
+    assert len(sink.alerts) == 1 and "лимит" in sink.alerts[0].lower()
+    assert (await db.get(CARD["slug"])).attempts == 0
+
+
+async def test_pipeline_bad_api_key_pauses_without_spending_attempts(db):
+    import anthropic
+    import httpx
+
+    from jobagent.pipeline import CREDIT_WAIT_SEC
+
+    class BadKey(FakeScorer):
+        async def triage(self, card):
+            request = httpx.Request("POST", "https://openrouter.ai/api/v1/messages")
+            raise anthropic.AuthenticationError("User not found.", response=httpx.Response(401, request=request), body=None)
+
+    await db.upsert_card(CARD, [], source="webhook")
+    sink = FakeSink()
+    p = Pipeline(db, FakeHirify(detail()), BadKey(), sink, 4, 7)
+    for _ in range(2):
+        assert await p.process_safely(await db.next_queued()) == CREDIT_WAIT_SEC
+    v = await db.get(CARD["slug"])
+    assert v.status == "queued" and v.attempts == 0
+    assert len(sink.alerts) == 1 and "ключ" in sink.alerts[0].lower()
+
+
 async def test_pipeline_other_bad_request_spends_attempt(db):
     import anthropic
     import httpx

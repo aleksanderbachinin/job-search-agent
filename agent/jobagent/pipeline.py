@@ -12,7 +12,7 @@ import anthropic
 from . import rules
 from .db import Database, Vacancy, company_key
 from .hirify import HirifyClient, HirifyError
-from .llm import out_of_credits
+from .llm import out_of_credits, rate_limit_wait
 from .research import skip_reason
 from .scoring import Scorer, ScoringError
 
@@ -22,6 +22,11 @@ MAX_ATTEMPTS = 3
 IDLE_WAIT_SEC = 60
 # Кончился баланс (Anthropic или OpenRouter): вакансия остаётся в очереди, попытка не тратится, проверяем раз в час.
 CREDIT_WAIT_SEC = 3600
+# Пауза из-за лимита запросов длиннее этой — повод написать в бот (дневной лимит бесплатных моделей).
+RATE_LIMIT_ALERT_SEC = 600
+# stage вакансии в очереди: отсев пройден, полный текст в detail, осталась только оценка.
+# Повтор после 429 или сбоя оценки не тратит заново Haiku, лимит Hirify и кредиты LinkedIn.
+STAGE_SCORING = "scoring"
 
 
 class CardSink(Protocol):
@@ -56,7 +61,8 @@ class Pipeline:
         self.research = research
         self.prefilter = prefilter
         self.wake = asyncio.Event()
-        self.no_credits = False
+        # Причина паузы, о которой уже написали в бот: credits / auth / rate_limit.
+        self.paused: str | None = None
 
     async def run_forever(self) -> None:
         while True:
@@ -76,9 +82,9 @@ class Pipeline:
         """Обрабатывает вакансию. Возвращает паузу в секундах перед следующей (при лимитах)."""
         try:
             await self.process(v)
-            if self.no_credits:
-                self.no_credits = False
-                await self.sink.alert("Баланс Claude API снова есть, продолжаю разбирать очередь.")
+            if self.paused:
+                self.paused = None
+                await self.sink.alert("Claude API снова отвечает, продолжаю разбирать очередь.")
             return 0
         except anthropic.BadRequestError as e:
             if not out_of_credits(e):
@@ -99,11 +105,24 @@ class Pipeline:
                 log.warning("Hirify временно недоступен (%s), пауза 2 мин", e)
                 return 120
             return await self._fail(v, e)
-        except anthropic.RateLimitError:
-            return 60
-        except (anthropic.APIConnectionError, anthropic.InternalServerError) as e:
+        except anthropic.RateLimitError as e:
+            wait = rate_limit_wait(e)
+            log.warning("Лимит запросов LLM API, пауза %.0f с: %s", wait, e)
+            if wait > RATE_LIMIT_ALERT_SEC:
+                await self._pause_alert(
+                    "rate_limit", f"Лимит запросов к модели исчерпан, продолжу через {wait / 3600:.1f} ч."
+                )
+            return wait
+        except (anthropic.APIConnectionError, anthropic.InternalServerError, anthropic.OverloadedError) as e:
             log.warning("Claude API недоступен: %s", e)
             return 60
+        except anthropic.AuthenticationError as e:
+            log.warning("Ключ LLM API не принят, %s остаётся в очереди: %s", v.slug, e)
+            await self._pause_alert(
+                "auth", "Ключ Claude API (Anthropic или OpenRouter) не принят. Вакансии ждут в очереди, "
+                "проверяю раз в час. Проверьте ключ в .env на сервере."
+            )
+            return CREDIT_WAIT_SEC
         except anthropic.APIStatusError as e:
             # OpenRouter без кредитов отвечает 402: у SDK для него нет отдельного класса.
             if out_of_credits(e):
@@ -114,14 +133,19 @@ class Pipeline:
             log.exception("Ошибка обработки %s", v.slug)
             return await self._fail(v, e)
 
+    async def _pause_alert(self, reason: str, text: str) -> None:
+        """Одно сообщение на паузу: повторы той же причины в бот не идут."""
+        if self.paused != reason:
+            self.paused = reason
+            await self.sink.alert(text)
+
     async def _no_credits(self, v: Vacancy) -> float:
         log.warning("Кончился баланс LLM API, %s остаётся в очереди", v.slug)
-        if not self.no_credits:
-            self.no_credits = True
-            await self.sink.alert(
-                "Кончился баланс Claude API (Anthropic или OpenRouter). Вакансии ждут в очереди, "
-                "проверяю раз в час. После пополнения продолжу сам."
-            )
+        await self._pause_alert(
+            "credits",
+            "Кончился баланс Claude API (Anthropic или OpenRouter). Вакансии ждут в очереди, "
+            "проверяю раз в час. После пополнения продолжу сам.",
+        )
         return CREDIT_WAIT_SEC
 
     async def _fail(self, v: Vacancy, e: Exception) -> float:
@@ -142,15 +166,18 @@ class Pipeline:
     async def company_skipped(self, company: str | None) -> bool:
         return bool(company) and company_key(company) in await self.db.skipped_companies()
 
-    async def process(self, v: Vacancy) -> None:
+    async def _prepare(self, v: Vacancy) -> tuple[dict, str | None] | None:
+        """Правила, Haiku по карточке, полный текст, Haiku по тексту, LinkedIn. None — вакансия отсеяна."""
         if reason := rules.check_card(v.card, relocation=rules.relocation_feed(v.feeds)):
             stage = "already" if "откликался" in reason or "трекере" in reason else "rules"
-            return await self.reject(v, stage, reason)
+            await self.reject(v, stage, reason)
+            return None
 
         triage, usage = await self.scorer.triage(v.card)
         await self.db.log_event("llm", v.slug, step="triage", **asdict(usage))
         if not triage.relevant:
-            return await self.reject(v, "triage", triage.reason)
+            await self.reject(v, "triage", triage.reason)
+            return None
 
         if v.vacancy_id is None:
             raise ValueError(f"Нет vacancy_id для {v.slug}")
@@ -158,17 +185,20 @@ class Pipeline:
         company = detail.get("company")
         await self.db.update(v.slug, detail=detail, company=company)
         if rejection := rules.check_detail(detail, self.max_age_days):
-            return await self.reject(v, *rejection)
+            await self.reject(v, *rejection)
+            return None
         # Hirify скрывает компанию после пропуска, но вакансии, уже стоящие в очереди, доходят сюда.
         if await self.company_skipped(company):
-            return await self.reject(v, "company", f"компания {company} пропущена как неинтересная")
+            await self.reject(v, "company", f"компания {company} пропущена как неинтересная")
+            return None
 
         # До LinkedIn и Sonnet: явные стоп-факторы дешевле отсечь Haiku по тексту.
         if self.prefilter:
             pre, usage = await self.scorer.prefilter(detail, v.feeds)
             await self.db.log_event("llm", v.slug, step="prefilter", **asdict(usage))
             if not pre.relevant:
-                return await self.reject(v, "prefilter", pre.reason)
+                await self.reject(v, "prefilter", pre.reason)
+                return None
 
         if self.research and (skip := skip_reason(detail)):
             await self.db.log_event("research", v.slug, skipped=skip)
@@ -180,6 +210,18 @@ class Pipeline:
             await self.db.log_event(
                 "research", v.slug, found=bool(found), credits=self.research.credits_used - before
             )
+        await self.db.update(v.slug, detail=detail, stage=STAGE_SCORING)
+        return detail, company
+
+    async def process(self, v: Vacancy) -> None:
+        if v.stage == STAGE_SCORING and v.detail:
+            detail = v.detail
+            company = detail.get("company")
+        else:
+            prepared = await self._prepare(v)
+            if prepared is None:
+                return
+            detail, company = prepared
 
         assessment, usage = await self.scorer.assess(detail, v.feeds)
         await self.db.log_event("llm", v.slug, step="scoring", **asdict(usage))
