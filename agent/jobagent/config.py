@@ -8,6 +8,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from .llm import openrouter_model
+
 AGENT_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(AGENT_DIR / ".env")
 
@@ -26,6 +28,8 @@ class Settings:
     hirify_webhook_secret: str = ""
     telegram_bot_token: str = ""
     telegram_owner_id: int = 0
+    # Задан — Claude идёт через OpenRouter (его баланс), иначе через ANTHROPIC_API_KEY.
+    openrouter_api_key: str = ""
     # Пусто = RU-проверка по LinkedIn выключена, Sonnet судит только по тексту вакансии.
     scrapecreators_api_key: str = ""
     # Пусто = все активные фильтры аккаунта.
@@ -61,21 +65,28 @@ class Settings:
         env = os.environ
         d = cls()
         db_path = Path(env.get("DB_PATH") or d.db_path)
+        openrouter_key = env.get("OPENROUTER_API_KEY", "").strip()
+
+        def model(name: str, default: str) -> str:
+            value = env.get(name) or default
+            return openrouter_model(value) if openrouter_key else value
+
         return cls(
             hirify_api_key=env.get("HIRIFY_API_KEY", ""),
             hirify_webhook_secret=env.get("HIRIFY_WEBHOOK_SECRET", ""),
             telegram_bot_token=env.get("TELEGRAM_BOT_TOKEN", ""),
             telegram_owner_id=int(env.get("TELEGRAM_OWNER_ID") or 0),
+            openrouter_api_key=openrouter_key,
             scrapecreators_api_key=env.get("SCRAPECREATORS_API_KEY", ""),
             feed_ids=_int_list(env.get("HIRIFY_FEED_IDS", "")),
             db_path=db_path,
             knowledge_dir=Path(env.get("KNOWLEDGE_DIR") or d.knowledge_dir),
-            triage_model=env.get("TRIAGE_MODEL", d.triage_model),
-            scoring_model=env.get("SCORING_MODEL", d.scoring_model),
+            triage_model=model("TRIAGE_MODEL", d.triage_model),
+            scoring_model=model("SCORING_MODEL", d.scoring_model),
             scoring_effort=env.get("SCORING_EFFORT", d.scoring_effort),
             prefilter=env.get("PREFILTER", "1").strip().lower() not in ("0", "false", "no", "off"),
-            package_model=env.get("PACKAGE_MODEL", d.package_model),
-            package_check_model=env.get("PACKAGE_CHECK_MODEL", d.package_check_model),
+            package_model=model("PACKAGE_MODEL", d.package_model),
+            package_check_model=model("PACKAGE_CHECK_MODEL", d.package_check_model),
             packages_dir=Path(env.get("PACKAGES_DIR") or db_path.parent / "packages"),
             candidate_email=env.get("CANDIDATE_EMAIL", ""),
             candidate_linkedin=env.get("CANDIDATE_LINKEDIN", ""),

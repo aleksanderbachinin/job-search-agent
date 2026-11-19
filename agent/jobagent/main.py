@@ -20,6 +20,7 @@ from .db import Database
 from .facts import FactFileError
 from .hirify import HirifyClient
 from .ingest import reconcile_forever, webhook_router
+from .llm import make_client
 from .package import PackageBuilder
 from .package_bot import PackageRunner
 from .package_store import PackageStore
@@ -61,7 +62,7 @@ def make_package_builder(settings: Settings, client: anthropic.AsyncAnthropic | 
         settings.package_model,
         settings.package_check_model,
         contacts,
-        client=client,
+        client=client or make_client(settings.openrouter_api_key),
     )
 
 
@@ -97,6 +98,8 @@ def create_app(settings: Settings) -> FastAPI:
         settings.triage_model,
         settings.scoring_model,
         settings.scoring_effort,
+        client=make_client(settings.openrouter_api_key),
+        server_fallback=not settings.openrouter_api_key,
     )
     research = LinkedInResearch(settings.scrapecreators_api_key) if settings.scrapecreators_api_key else None
     pipeline = Pipeline(

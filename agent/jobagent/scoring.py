@@ -320,8 +320,11 @@ class Scorer:
         scoring_model: str,
         scoring_effort: str = "medium",
         client: anthropic.AsyncAnthropic | None = None,
+        server_fallback: bool = True,
     ):
         self.client = client or anthropic.AsyncAnthropic()
+        # Серверный fallback есть только у Anthropic API; OpenRouter на него отвечает 400.
+        self.server_fallback = server_fallback
         self.triage_model = triage_model
         self.scoring_model = scoring_model
         self.scoring_effort = scoring_effort
@@ -383,6 +386,7 @@ class Scorer:
         self, detail: dict[str, Any], feeds: list[dict[str, Any]]
     ) -> tuple[Assessment, Usage]:
         content = "<vacancy>\n" + vacancy_for_prompt(detail, feeds) + "\n</vacancy>"
+        fallback = {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"} if self.server_fallback else {}
         resp = await self.client.beta.messages.parse(
             model=self.scoring_model,
             max_tokens=16000,
@@ -390,8 +394,7 @@ class Scorer:
             output_config={"effort": self.scoring_effort},
             messages=[{"role": "user", "content": content}],
             output_format=Assessment,
-            betas=["server-side-fallback-2026-07-01"],
-            fallbacks="default",
+            **fallback,
         )
         usage = Usage.from_response(resp.model, resp.usage)
         if resp.stop_reason == "refusal":

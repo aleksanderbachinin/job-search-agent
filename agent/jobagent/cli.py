@@ -28,6 +28,7 @@ from .cards import render_full
 from .claude_code import ClaudeCodeClient
 from .config import AGENT_DIR, Settings
 from .hirify import HirifyClient
+from .llm import make_client
 from .main import make_package_builder
 from .package_bot import render_summary
 from .package_store import write_files
@@ -126,7 +127,14 @@ async def cmd_dry_run(s: Settings, vacancy_id: int, file: Path | None) -> None:
     if reason := rules.check_card(detail):
         print(f"Правила отсеяли: {reason}")
         return
-    scorer = Scorer(s.knowledge_dir, s.triage_model, s.scoring_model, s.scoring_effort)
+    scorer = Scorer(
+        s.knowledge_dir,
+        s.triage_model,
+        s.scoring_model,
+        s.scoring_effort,
+        client=make_client(s.openrouter_api_key),
+        server_fallback=not s.openrouter_api_key,
+    )
     triage, usage = await scorer.triage(detail)
     print(f"Haiku: relevant={triage.relevant} ({triage.reason}); токены {usage}")
     if stale := rules.check_detail(detail, s.max_age_days):
@@ -178,7 +186,7 @@ async def cmd_package(
 async def cmd_package_eval(s: Settings, fixtures: Path) -> None:
     """Сборка пакетов по фикстурам настоящими моделями (стоит денег), отчёт рядом с отчётами eval."""
     # SDK сам повторяет запросы при 429, 5xx и обрывах связи.
-    builder = make_package_builder(s, anthropic.AsyncAnthropic(max_retries=6))
+    builder = make_package_builder(s, make_client(s.openrouter_api_key, max_retries=6))
     if builder is None:
         raise SystemExit("Для пакета нужны CANDIDATE_EMAIL и CANDIDATE_LINKEDIN в agent/.env")
     run = await package_eval.run(fixtures, builder, out_dir=evals.EVALS_DIR)
@@ -199,11 +207,18 @@ async def cmd_eval(s: Settings, args: argparse.Namespace) -> None:
         raise SystemExit(f"Нет снимка базы {args.db}. Как его снять — agent/README.md, «Проверка промптов».")
     if args.backend == "api":
         # SDK сам повторяет запросы при 429, 5xx и обрывах связи; на прогон из сотни вакансий берём запас.
-        client = anthropic.AsyncAnthropic(max_retries=6)
+        client = make_client(s.openrouter_api_key, max_retries=6)
     else:
         # По подписке Claude Code: ключ API из .env в `claude -p` не передаётся.
         client = ClaudeCodeClient()
-    scorer = Scorer(s.knowledge_dir, s.triage_model, s.scoring_model, s.scoring_effort, client=client)
+    scorer = Scorer(
+        s.knowledge_dir,
+        s.triage_model,
+        s.scoring_model,
+        s.scoring_effort,
+        client=client,
+        server_fallback=args.backend != "api" or not s.openrouter_api_key,
+    )
     # Scoring и выборки с --limit повторяем на тех же вакансиях, что в прошлом прогоне.
     reuse = compare and (args.step == "scoring" or compare[0].get("limit"))
     only = {i["slug"] for i in compare[0]["items"]} if reuse else None

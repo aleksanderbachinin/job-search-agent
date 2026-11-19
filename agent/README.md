@@ -45,6 +45,7 @@ Hirify вебхук ─┐
 | `TELEGRAM_BOT_TOKEN` | @BotFather → `/newbot` |
 | `TELEGRAM_OWNER_ID` | ваш числовой id, например через @userinfobot |
 | `ANTHROPIC_API_KEY` | console.anthropic.com |
+| `OPENROUTER_API_KEY` | openrouter.ai/settings/keys. Необязательно: если задан, Claude идёт через OpenRouter (его баланс), названия моделей переводятся сами (`claude-sonnet-5-5` → `anthropic/claude-sonnet-5.5`), `ANTHROPIC_API_KEY` не используется |
 | `CANDIDATE_EMAIL`, `CANDIDATE_LINKEDIN` | Контакты в шапке резюме и подписи письма. Без них пакеты отклика выключены: кнопки нет, в журнале одно предупреждение при старте |
 | `CANDIDATE_TELEGRAM` | Ссылка на Telegram для тех же мест, необязательно |
 

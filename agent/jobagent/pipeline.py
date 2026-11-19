@@ -12,6 +12,7 @@ import anthropic
 from . import rules
 from .db import Database, Vacancy, company_key
 from .hirify import HirifyClient, HirifyError
+from .llm import out_of_credits
 from .research import skip_reason
 from .scoring import Scorer, ScoringError
 
@@ -19,12 +20,8 @@ log = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 3
 IDLE_WAIT_SEC = 60
-# Кончился баланс Anthropic: вакансия остаётся в очереди, попытка не тратится, проверяем раз в час.
+# Кончился баланс (Anthropic или OpenRouter): вакансия остаётся в очереди, попытка не тратится, проверяем раз в час.
 CREDIT_WAIT_SEC = 3600
-
-
-def out_of_credits(e: anthropic.BadRequestError) -> bool:
-    return "credit balance" in str(e).lower()
 
 
 class CardSink(Protocol):
@@ -81,20 +78,13 @@ class Pipeline:
             await self.process(v)
             if self.no_credits:
                 self.no_credits = False
-                await self.sink.alert("Баланс Anthropic снова есть, продолжаю разбирать очередь.")
+                await self.sink.alert("Баланс Claude API снова есть, продолжаю разбирать очередь.")
             return 0
         except anthropic.BadRequestError as e:
             if not out_of_credits(e):
                 log.exception("Ошибка обработки %s", v.slug)
                 return await self._fail(v, e)
-            log.warning("Кончился баланс Anthropic, %s остаётся в очереди", v.slug)
-            if not self.no_credits:
-                self.no_credits = True
-                await self.sink.alert(
-                    "Кончился баланс Anthropic. Вакансии ждут в очереди, проверяю раз в час. "
-                    "После пополнения продолжу сам."
-                )
-            return CREDIT_WAIT_SEC
+            return await self._no_credits(v)
         except HirifyError as e:
             if e.is_limit:
                 wait = float(e.retry_after or 600)
@@ -114,9 +104,25 @@ class Pipeline:
         except (anthropic.APIConnectionError, anthropic.InternalServerError) as e:
             log.warning("Claude API недоступен: %s", e)
             return 60
+        except anthropic.APIStatusError as e:
+            # OpenRouter без кредитов отвечает 402: у SDK для него нет отдельного класса.
+            if out_of_credits(e):
+                return await self._no_credits(v)
+            log.exception("Ошибка обработки %s", v.slug)
+            return await self._fail(v, e)
         except Exception as e:
             log.exception("Ошибка обработки %s", v.slug)
             return await self._fail(v, e)
+
+    async def _no_credits(self, v: Vacancy) -> float:
+        log.warning("Кончился баланс LLM API, %s остаётся в очереди", v.slug)
+        if not self.no_credits:
+            self.no_credits = True
+            await self.sink.alert(
+                "Кончился баланс Claude API (Anthropic или OpenRouter). Вакансии ждут в очереди, "
+                "проверяю раз в час. После пополнения продолжу сам."
+            )
+        return CREDIT_WAIT_SEC
 
     async def _fail(self, v: Vacancy, e: Exception) -> float:
         attempts = v.attempts + 1

@@ -448,6 +448,26 @@ async def test_pipeline_out_of_credits_pauses_with_one_alert(db):
     assert len(sink.alerts) == 2 and "снова" in sink.alerts[1]
 
 
+async def test_pipeline_openrouter_402_pauses_without_spending_attempt(db):
+    import anthropic
+    import httpx
+
+    from jobagent.pipeline import CREDIT_WAIT_SEC
+
+    class NoCredits(FakeScorer):
+        async def triage(self, card):
+            request = httpx.Request("POST", "https://openrouter.ai/api/v1/messages")
+            raise anthropic.APIStatusError("Insufficient credits", response=httpx.Response(402, request=request), body=None)
+
+    await db.upsert_card(CARD, [], source="webhook")
+    sink = FakeSink()
+    p = Pipeline(db, FakeHirify(detail()), NoCredits(), sink, 4, 7)
+    assert await p.process_safely(await db.next_queued()) == CREDIT_WAIT_SEC
+    v = await db.get(CARD["slug"])
+    assert v.status == "queued" and v.attempts == 0
+    assert len(sink.alerts) == 1 and "баланс" in sink.alerts[0].lower()
+
+
 async def test_pipeline_other_bad_request_spends_attempt(db):
     import anthropic
     import httpx

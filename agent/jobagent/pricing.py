@@ -10,12 +10,16 @@ shared/prompt-caching.md, раздел «Economics»), сверено 2026-10-28
     cache_write считаем по этой цене.
 Haiku 5.5 с промптом больше 100K стоит дороже ($0.50 / $2.50); у нас таких промптов нет.
 Меняются цены или модели — правь таблицу и дату сверки.
+Через OpenRouter цены моделей те же (сверено 2026-11-19 по openrouter.ai/api/v1/models),
+названия приводятся к ключам таблицы через llm.canonical_model.
 """
 
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
 from typing import Any, NamedTuple
+
+from .llm import canonical_model
 
 
 class Price(NamedTuple):
@@ -38,7 +42,9 @@ def usage_cost(usage: Any) -> float | None:
     None, если модели нет в PRICES: её задали переменной окружения, а цену не внесли.
     """
     u = asdict(usage) if is_dataclass(usage) else usage
-    price = PRICES.get(u.get("model") or "")
+    if (u.get("model") or "").endswith(":free"):
+        return 0.0  # бесплатные модели OpenRouter
+    price = PRICES.get(canonical_model(u.get("model") or ""))
     if price is None:
         return None
     return (

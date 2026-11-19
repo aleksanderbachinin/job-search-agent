@@ -117,6 +117,20 @@ async def test_assess_request_uses_cache_fallbacks_and_knowledge(knowledge):
     assert "Remoteria" in body["messages"][0]["content"]
 
 
+async def test_assess_without_server_fallback_for_openrouter(knowledge):
+    # OpenRouter не знает fallbacks="default" и отвечает 400: через него параметр не шлём.
+    captured = []
+    client = make_client(captured, assessment(score=4).model_dump(), SCORING_MODEL)
+    scorer = Scorer(knowledge, TRIAGE_MODEL, SCORING_MODEL, client=client, server_fallback=False)
+    result, _ = await scorer.assess(detail(), [{"id": 1, "name": "PM remote"}])
+    assert result.score == 4
+    req = captured[0]
+    body = json.loads(req.content)
+    assert "fallbacks" not in body
+    assert "server-side-fallback" not in req.headers.get("anthropic-beta", "")
+    assert body["output_config"]["format"]["type"] == "json_schema"
+
+
 async def test_prefilter_request_uses_triage_model_criteria_and_long_cache(knowledge):
     captured = []
     client = make_client(captured, {"reason": "гибрид в Москве", "condition": "office"}, TRIAGE_MODEL)
