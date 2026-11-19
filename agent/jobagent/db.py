@@ -3,7 +3,7 @@
 Статусы вакансии:
   queued   — ждёт обработки воркером;
   baseline — была в фильтре до первого запуска, не оценивается;
-  rejected — отсеяна (stage: already / rules / triage / stale / company / prefilter / score / foreign);
+  rejected — отсеяна (stage: already / rules / triage / stale / company / prefilter / score / foreign / gone);
   shown    — карточка отправлена в бот;
   applied  — Александр откликнулся;
   skipped  — Александр пропустил (reason — причина);

@@ -550,6 +550,24 @@ async def test_pipeline_bad_api_key_pauses_without_spending_attempts(db):
     assert len(sink.alerts) == 1 and "ключ" in sink.alerts[0].lower()
 
 
+async def test_pipeline_vacancy_removed_on_hirify_is_rejected_quietly(db):
+    # Пока вакансия ждала в очереди, её удалили с Hirify: это отсев, а не ошибка и не сообщение в бот.
+    from jobagent.hirify import HirifyError
+
+    class Gone(FakeHirify):
+        async def read_vacancy(self, vacancy_id):
+            self.reads += 1
+            raise HirifyError(404, "not_found", "Vacancy not found.")
+
+    await db.upsert_card(CARD, [], source="webhook")
+    sink, hirify = FakeSink(), Gone(detail())
+    p = Pipeline(db, hirify, FakeScorer(), sink, 4, 7)
+    assert await p.process_safely(await db.next_queued()) == 0
+    v = await db.get(CARD["slug"])
+    assert v.status == "rejected" and v.stage == "gone" and v.attempts == 0
+    assert hirify.reads == 1 and not sink.alerts
+
+
 async def test_pipeline_other_bad_request_spends_attempt(db):
     import anthropic
     import httpx

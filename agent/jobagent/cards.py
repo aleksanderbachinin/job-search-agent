@@ -262,6 +262,7 @@ def render_stats(
         "company": "компания пропущена раньше",
         "score": "оценка ниже порога",
         "foreign": "иностранная команда",
+        "gone": "удалена с Hirify",
     }
     lines = [f"<b>Воронка {escape(period)}</b>", f"Получено: {received}"]
     total_rejected = sum(rejected.values())

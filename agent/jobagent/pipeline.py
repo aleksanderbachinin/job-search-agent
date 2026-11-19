@@ -181,7 +181,14 @@ class Pipeline:
 
         if v.vacancy_id is None:
             raise ValueError(f"Нет vacancy_id для {v.slug}")
-        detail = await self.hirify.read_vacancy(v.vacancy_id)
+        try:
+            detail = await self.hirify.read_vacancy(v.vacancy_id)
+        except HirifyError as e:
+            # Пока вакансия ждала в очереди, её сняли с Hirify: отсев, а не сбой.
+            if e.status == 404:
+                await self.reject(v, "gone", "вакансия удалена с Hirify")
+                return None
+            raise
         company = detail.get("company")
         await self.db.update(v.slug, detail=detail, company=company)
         if rejection := rules.check_detail(detail, self.max_age_days):
