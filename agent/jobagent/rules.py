@@ -24,6 +24,9 @@ MIN_SALARY_RUB = 250_000
 # откликов не было ни одного. Вакансии из лент с релокацией не трогаем: там офис с переездом подходит.
 FORMAT_NAMES = {"hybrid": "гибрид", "onsite": "офис"}
 RELOCATION_FEED = re.compile(r"relocation|релокац", re.IGNORECASE)
+# Лента ОАЭ (с 2026-11-23): офис или гибрид в ОАЭ и удалёнка с привязкой к ОАЭ подходят без
+# релокационной поддержки, кандидат переедет сам. Иностранная команда там не стоп-фактор.
+UAE_FEED = re.compile(r"\buae\b|оаэ|emirates|эмират", re.IGNORECASE)
 
 # Удалёнка, на которую берут только из США: из 157 таких в бот не попала ни одна (с 2026-11-16).
 USA_ONLY = "usa"
@@ -73,6 +76,16 @@ def low_salary(vacancy: dict[str, Any]) -> int | None:
 def relocation_feed(feeds: list[dict[str, Any]]) -> bool:
     """Пришла ли вакансия из ленты с релокацией (по названию ленты)."""
     return any(RELOCATION_FEED.search(str(f.get("name") or "")) for f in feeds)
+
+
+def uae_feed(feeds: list[dict[str, Any]]) -> bool:
+    """Пришла ли вакансия из ленты ОАЭ (по названию ленты)."""
+    return any(UAE_FEED.search(str(f.get("name") or "")) for f in feeds)
+
+
+def format_exempt(feeds: list[dict[str, Any]]) -> bool:
+    """Офис, гибрид и удалёнка только из США по карточке не отсеиваются: ленты релокации и ОАЭ."""
+    return relocation_feed(feeds) or uae_feed(feeds)
 
 
 def no_remote(card: dict[str, Any]) -> str | None:

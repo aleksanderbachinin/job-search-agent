@@ -116,7 +116,7 @@ def round_robin(queues: list[list[Vacancy]], limit: int | None) -> list[Vacancy]
 
 
 def card_reject(v: Vacancy) -> bool:
-    return rules.check_card(v.card, relocation=rules.relocation_feed(v.feeds)) is not None
+    return rules.check_card(v.card, relocation=rules.format_exempt(v.feeds)) is not None
 
 
 def rules_reject(v: Vacancy) -> bool:

@@ -244,6 +244,20 @@ def test_format_without_remote_kept_for_relocation_feed():
     assert not rules.relocation_feed([])
 
 
+UAE_FEED = [{"id": 92501, "name": "UAE: relocation or remote"}]
+
+
+def test_uae_feed_detected_and_exempt_from_format_rules():
+    plain = [{"id": 31447, "name": "Product Manager — remote/hybrid (TG)"}]
+    assert rules.uae_feed(UAE_FEED + plain)
+    assert rules.uae_feed([{"id": 1, "name": "Вакансии в ОАЭ"}])
+    assert not rules.uae_feed(plain) and not rules.uae_feed([])
+    # Офис в ОАЭ и удалёнка с привязкой к ОАЭ проходят правила по карточке.
+    assert rules.format_exempt(UAE_FEED)
+    assert rules.format_exempt([{"id": 67562, "name": "Product Manager — relocation (TG)"}])
+    assert not rules.format_exempt(plain)
+
+
 def test_usa_only_remote_rejected():
     assert rules.check_card({**CARD, "remote_type": "usa"}) == "удалёнка только из США"
     assert rules.check_card({**CARD, "remote_type": "usa"}, relocation=True) is None
@@ -591,6 +605,26 @@ async def test_pipeline_keeps_onsite_from_relocation_feed(db):
     p = Pipeline(db, FakeHirify(detail(work_format=["onsite"])), FakeScorer(score=5), FakeSink(), 4, 7)
     await p.process_safely(await db.next_queued())
     assert (await db.get(CARD["slug"])).status == "shown"
+
+
+async def test_pipeline_keeps_onsite_from_uae_feed(db):
+    card = {**CARD, "work_format": ["onsite"]}
+    await db.upsert_card(card, UAE_FEED, source="webhook")
+    p = Pipeline(db, FakeHirify(detail(work_format=["onsite"])), FakeScorer(score=5), FakeSink(), 4, 7)
+    await p.process_safely(await db.next_queued())
+    assert (await db.get(CARD["slug"])).status == "shown"
+
+
+async def test_pipeline_shows_foreign_team_from_uae_feed(db):
+    class Foreign(FakeScorer):
+        async def assess(self, d, feeds):
+            return assessment(4).model_copy(update={"ru_label": "foreign"}), Usage("sonnet", 5000, 400, 4000)
+
+    await db.upsert_card(CARD, UAE_FEED, source="webhook")
+    p = Pipeline(db, FakeHirify(detail()), Foreign(), FakeSink(), 4, 7)
+    await p.process_safely(await db.next_queued())
+    v = await db.get(CARD["slug"])
+    assert v.status == "shown" and v.score == 4
 
 
 async def test_pipeline_hirify_outage_keeps_vacancy_queued(db):

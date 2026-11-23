@@ -149,6 +149,21 @@ async def test_prefilter_request_uses_triage_model_criteria_and_long_cache(knowl
     assert content.startswith("<vacancy>") and "Remoteria" in content
 
 
+@pytest.mark.parametrize(
+    ("condition", "relevant"),
+    [("office", True), ("no_russia", True), ("junior", False), ("not_product", False)],
+)
+async def test_prefilter_uae_feed_ignores_format_conditions(knowledge, condition, relevant):
+    # В ленте ОАЭ офис и «только из ОАЭ» не отсев: кандидат переедет сам, решит Sonnet.
+    captured = []
+    client = make_client(captured, {"reason": "офис в Дубае", "condition": condition}, TRIAGE_MODEL)
+    scorer = Scorer(knowledge, TRIAGE_MODEL, SCORING_MODEL, client=client)
+    result, _ = await scorer.prefilter(detail(), [{"id": 92501, "name": "UAE: relocation or remote"}])
+    assert result.relevant is relevant
+    if relevant:
+        assert "ОАЭ" in result.reason
+
+
 async def test_prefilter_lets_vacancy_through_on_refusal(knowledge):
     def handler(request):
         return httpx2.Response(

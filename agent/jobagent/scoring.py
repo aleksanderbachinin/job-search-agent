@@ -11,6 +11,7 @@ from typing import Any, Literal
 import anthropic
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from . import rules
 from .facts import strip_markers
 
 log = logging.getLogger(__name__)
@@ -141,6 +142,9 @@ PREFILTER_CONDITIONS = {
     "junior": "грейд trainee, intern или junior",
     "not_product": "не продуктовая роль",
 }
+# В ленте ОАЭ офис в ОАЭ и «только для живущих в ОАЭ» не отсев: кандидат переедет сам.
+# Решает Sonnet по критериям, там же вето «только для граждан ОАЭ».
+UAE_IGNORED_CONDITIONS = frozenset({"office", "no_russia"})
 
 
 class PrefilterAnswer(BaseModel):
@@ -379,6 +383,8 @@ class Scorer:
             return Triage(relevant=True, reason="prefilter не дал ответа"), usage
         if answer.condition == "none":
             return Triage(relevant=True, reason=answer.reason), usage
+        if answer.condition in UAE_IGNORED_CONDITIONS and rules.uae_feed(feeds):
+            return Triage(relevant=True, reason=f"{answer.reason} (лента ОАЭ: формат не отсев)"), usage
         label = PREFILTER_CONDITIONS[answer.condition]
         return Triage(relevant=False, reason=f"{answer.reason} (отсев: {label})"), usage
 

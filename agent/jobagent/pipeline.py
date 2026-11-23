@@ -168,7 +168,7 @@ class Pipeline:
 
     async def _prepare(self, v: Vacancy) -> tuple[dict, str | None] | None:
         """Правила, Haiku по карточке, полный текст, Haiku по тексту, LinkedIn. None — вакансия отсеяна."""
-        if reason := rules.check_card(v.card, relocation=rules.relocation_feed(v.feeds)):
+        if reason := rules.check_card(v.card, relocation=rules.format_exempt(v.feeds)):
             stage = "already" if "откликался" in reason or "трекере" in reason else "rules"
             await self.reject(v, stage, reason)
             return None
@@ -237,7 +237,8 @@ class Pipeline:
         if assessment.score < self.min_score:
             return await self.reject(v, "score", f"{assessment.score}/5: {assessment.verdict}")
         # Стоп-фактор: на иностранные команды Александр не откликается при любой оценке.
-        if assessment.ru_label == "foreign":
+        # Кроме ленты ОАЭ: там почти все команды иностранные, метка ❌ остаётся в карточке.
+        if assessment.ru_label == "foreign" and not rules.uae_feed(v.feeds):
             return await self.reject(v, "foreign", f"{assessment.score}/5, иностранная команда: {assessment.ru_summary}")
 
         # Ещё раз: пока шла оценка, Александр мог пропустить другую карточку этой компании.
