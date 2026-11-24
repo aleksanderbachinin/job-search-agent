@@ -102,6 +102,7 @@ cd agent && uv run python -m jobagent.cli test-webhook <webhook_id>
 | Ключи | `/opt/jobagent/app/agent/.env`. Рабочий файл: только в нём есть `HIRIFY_WEBHOOK_SECRET` |
 | Сервис | `systemctl status jobagent`, логи: `journalctl -u jobagent -f` |
 | HTTPS | Caddy, `/etc/caddy/Caddyfile`. Наружу открыты только `/hirify/webhook` и `/healthz` |
+| Бэкап | Таймер `jobagent-backup.timer` в 03:30 UTC: `/usr/local/bin/jobagent-backup` кладёт консистентную копию базы и пакеты в `/opt/jobagent/backups/`, 14 последних. Mac забирает свежий архив в 10:00 (`./backup_pull.sh`, launchd `com.jobagent.backup-pull`, лог `~/Library/Logs/jobagent-backup-pull.log`) в `agent/data/backups/`, 30 последних. Ключ `~/.ssh/id_ed25519_jobagent_backup` на сервере может только отдать архив |
 
 Выкладка идёт из git-коммита, а не из рабочей папки. Сначала закоммитьте правки, затем из папки «Agent Job Search»:
 
