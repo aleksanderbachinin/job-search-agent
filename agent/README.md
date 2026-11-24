@@ -93,8 +93,9 @@ cd agent && uv run python -m jobagent.cli test-webhook <webhook_id>
 
 | Что | Где |
 |---|---|
-| Сервер | VPS в Таллине, `root@193.42.112.144`, Ubuntu 24.04. На нём же VPN Александра (Shadowsocks, Xray, WireGuard, dante): их, файрвол, `/etc/ssl/cloudflare/` и `/usr/local/etc/xray/config.json.bak` не трогать без его согласия |
-| Адрес для Hirify | `https://193-42-112-144.sslip.io/hirify/webhook`, вебхук Hirify id=26, подключён ко всем активным фильтрам (5 на 2026-11-12) |
+| Сервер | VPS HexCore в Таллине, `root@138.249.207.239`, Ubuntu 24.04, с 2026-11-24 (прежний `193.42.112.144` отключился). Файрвол не трогать без согласия Александра |
+| systemd | `/etc/systemd/system/jobagent.service`: пользователь `jobagent`, `DB_PATH=/opt/jobagent/data/jobagent.sqlite3`, слушает `127.0.0.1:8080` |
+| Адрес для Hirify | `https://138-249-207-239.sslip.io/hirify/webhook`, вебхук Hirify id=26, подключён ко всем активным фильтрам (5 на 2026-11-12) |
 | Код | `/opt/jobagent/app` (копия папки «Agent Job Search»), пользователь `jobagent` |
 | База | `/opt/jobagent/data/jobagent.sqlite3` |
 | Пакеты отклика | `/opt/jobagent/data/packages/`. systemd (`ProtectSystem=strict`) даёт сервису писать только в `/opt/jobagent/data`, папка кода для него только для чтения |
@@ -115,7 +116,7 @@ cd agent && uv run python -m jobagent.cli test-webhook <webhook_id>
 | `./deploy.sh` | Выкладывает HEAD. Если есть незакоммиченные изменения, отказывается |
 | `./deploy.sh prod` | Откат на прошлую удачную выкладку |
 | `./deploy.sh <sha>` | Выкладывает любой коммит |
-| `curl https://193-42-112-144.sslip.io/healthz` | Какой коммит сейчас работает: `{"ok":true,"version":"<sha>"}` |
+| `curl https://138-249-207-239.sslip.io/healthz` | Какой коммит сейчас работает: `{"ok":true,"version":"<sha>"}` |
 | `git diff prod` | Что изменилось с последней выкладки |
 
 ## Как устроен приём
@@ -135,7 +136,7 @@ cd agent && uv run python -m jobagent.cli test-webhook <webhook_id>
 Консистентная копия через `sqlite3` backup, база на сервере открывается только на чтение. Команда из папки `agent/`:
 
 ```bash
-ssh root@193.42.112.144 '/opt/jobagent/app/agent/.venv/bin/python -c "import sqlite3; s = sqlite3.connect(\"file:/opt/jobagent/data/jobagent.sqlite3?mode=ro\", uri=True); d = sqlite3.connect(\"/tmp/jobagent-eval.sqlite3\"); s.backup(d); d.close()"' && scp root@193.42.112.144:/tmp/jobagent-eval.sqlite3 data/eval.sqlite3 && ssh root@193.42.112.144 rm /tmp/jobagent-eval.sqlite3
+ssh root@138.249.207.239 '/opt/jobagent/app/agent/.venv/bin/python -c "import sqlite3; s = sqlite3.connect(\"file:/opt/jobagent/data/jobagent.sqlite3?mode=ro\", uri=True); d = sqlite3.connect(\"/tmp/jobagent-eval.sqlite3\"); s.backup(d); d.close()"' && scp root@138.249.207.239:/tmp/jobagent-eval.sqlite3 data/eval.sqlite3 && ssh root@138.249.207.239 rm /tmp/jobagent-eval.sqlite3
 ```
 
 Снимок лежит в `agent/data/eval.sqlite3`, результаты прогонов в `agent/data/evals/`. Папка `data/` в git не попадает. Другой снимок можно передать через `--db`.

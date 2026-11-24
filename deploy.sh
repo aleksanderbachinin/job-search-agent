@@ -11,9 +11,9 @@
 
 set -euo pipefail
 
-HOST=root@193.42.112.144
+HOST=root@138.249.207.239
 APP=/opt/jobagent/app
-HEALTHZ=https://193-42-112-144.sslip.io/healthz
+HEALTHZ=https://138-249-207-239.sslip.io/healthz
 # Сколько секунд после ответа /healthz смотреть журнал: бот и воркер стартуют следом.
 SETTLE_SEC=20
 
